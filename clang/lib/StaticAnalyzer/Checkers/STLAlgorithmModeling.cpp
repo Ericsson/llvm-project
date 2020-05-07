@@ -166,15 +166,3 @@ void STLAlgorithmModeling::Find(CheckerContext &C, const CallExpr *CE,
 }
 
 } // namespace
-
-void ento::registerSTLAlgorithmModeling(CheckerManager &Mgr) {
-  auto *Checker = Mgr.registerChecker<STLAlgorithmModeling>();
-  Checker->AggressiveStdFindModeling =
-      Mgr.getAnalyzerOptions().getCheckerBooleanOption(Checker,
-                                                  "AggressiveStdFindModeling");
-}
-
-bool ento::shouldRegisterSTLAlgorithmModeling(const CheckerManager &mgr) {
-  return true;
-}
-

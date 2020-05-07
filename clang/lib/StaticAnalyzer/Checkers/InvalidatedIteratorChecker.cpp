@@ -134,11 +134,3 @@ void InvalidatedIteratorChecker::reportBug(const StringRef &Message,
   R->markInteresting(Val);
   C.emitReport(std::move(R));
 }
-
-void ento::registerInvalidatedIteratorChecker(CheckerManager &mgr) {
-  mgr.registerChecker<InvalidatedIteratorChecker>();
-}
-
-bool ento::shouldRegisterInvalidatedIteratorChecker(const CheckerManager &mgr) {
-  return true;
-}

@@ -140,11 +140,3 @@ ExplodedNode *DebugContainerModeling::reportDebugMsg(llvm::StringRef Msg,
                                                          Msg, N));
   return N;
 }
-
-void ento::registerDebugContainerModeling(CheckerManager &mgr) {
-  mgr.registerChecker<DebugContainerModeling>();
-}
-
-bool ento::shouldRegisterDebugContainerModeling(const CheckerManager &mgr) {
-  return true;
-}

@@ -298,10 +298,3 @@ void MismatchedIteratorChecker::reportBug(const StringRef &Message,
   C.emitReport(std::move(R));
 }
 
-void ento::registerMismatchedIteratorChecker(CheckerManager &mgr) {
-  mgr.registerChecker<MismatchedIteratorChecker>();
-}
-
-bool ento::shouldRegisterMismatchedIteratorChecker(const CheckerManager &mgr) {
-  return true;
-}

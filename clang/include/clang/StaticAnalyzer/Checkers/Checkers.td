@@ -709,40 +709,40 @@ def EnumCastOutOfRangeChecker : Checker<"EnumCastOutOfRange">,
   HelpText<"Check integer to enumeration casts for out of range values">,
   Documentation<HasAlphaDocumentation>;
 
-def IteratorModeling : Checker<"IteratorModeling">,
-  HelpText<"Models iterators of C++ containers">,
-  Dependencies<[ContainerModeling]>,
-  Documentation<NotDocumented>,
-  Hidden;
-
-def STLAlgorithmModeling : Checker<"STLAlgorithmModeling">,
-  HelpText<"Models the algorithm library of the C++ STL.">,
-  CheckerOptions<[
-    CmdLineOption<Boolean,
-                  "AggressiveStdFindModeling",
-                  "Enables exploration of the failure branch in std::find-like "
-                  "functions.",
-                  "false",
-                  Released>
-  ]>,
-  Dependencies<[ContainerModeling]>,
-  Documentation<NotDocumented>;
-
-def InvalidatedIteratorChecker : Checker<"InvalidatedIterator">,
-  HelpText<"Check for use of invalidated iterators">,
-  Dependencies<[IteratorModeling]>,
-  Documentation<HasAlphaDocumentation>;
-
-def IteratorRangeChecker : Checker<"IteratorRange">,
-  HelpText<"Check for iterators used outside their valid ranges">,
-  Dependencies<[IteratorModeling]>,
-  Documentation<HasAlphaDocumentation>;
-
-def MismatchedIteratorChecker : Checker<"MismatchedIterator">,
-  HelpText<"Check for use of iterators of different containers where iterators "
-           "of the same container are expected">,
-  Dependencies<[IteratorModeling]>,
-  Documentation<HasAlphaDocumentation>;
+// def IteratorModeling : Checker<"IteratorModeling">,
+//   HelpText<"Models iterators of C++ containers">,
+//   Dependencies<[ContainerModeling]>,
+//   Documentation<NotDocumented>,
+//   Hidden;
+// 
+// def STLAlgorithmModeling : Checker<"STLAlgorithmModeling">,
+//   HelpText<"Models the algorithm library of the C++ STL.">,
+//   CheckerOptions<[
+//     CmdLineOption<Boolean,
+//                   "AggressiveStdFindModeling",
+//                   "Enables exploration of the failure branch in std::find-like "
+//                   "functions.",
+//                   "false",
+//                   Released>
+//   ]>,
+//   Dependencies<[ContainerModeling]>,
+//   Documentation<NotDocumented>;
+// 
+// def InvalidatedIteratorChecker : Checker<"InvalidatedIterator">,
+//   HelpText<"Check for use of invalidated iterators">,
+//   Dependencies<[IteratorModeling]>,
+//   Documentation<HasAlphaDocumentation>;
+// 
+// def IteratorRangeChecker : Checker<"IteratorRange">,
+//   HelpText<"Check for iterators used outside their valid ranges">,
+//   Dependencies<[IteratorModeling]>,
+//   Documentation<HasAlphaDocumentation>;
+// 
+// def MismatchedIteratorChecker : Checker<"MismatchedIterator">,
+//   HelpText<"Check for use of iterators of different containers where iterators "
+//            "of the same container are expected">,
+//   Dependencies<[IteratorModeling]>,
+//   Documentation<HasAlphaDocumentation>;
 
 def SmartPtrChecker: Checker<"SmartPtr">,
   HelpText<"Find the dereference of null SmrtPtr">,
@@ -1538,15 +1538,15 @@ def ReportStmts : Checker<"ReportStmts">,
   HelpText<"Emits a warning for every statement.">,
   Documentation<NotDocumented>;
 
-def DebugContainerModeling : Checker<"DebugContainerModeling">,
-  HelpText<"Check the analyzer's understanding of C++ containers">,
-  Dependencies<[ContainerModeling]>,
-  Documentation<NotDocumented>;
-
-def DebugIteratorModeling : Checker<"DebugIteratorModeling">,
-  HelpText<"Check the analyzer's understanding of C++ iterators">,
-  Dependencies<[DebugContainerModeling, IteratorModeling]>,
-  Documentation<NotDocumented>;
+//def DebugContainerModeling : Checker<"DebugContainerModeling">,
+//  HelpText<"Check the analyzer's understanding of C++ containers">,
+//  Dependencies<[ContainerModeling]>,
+//  Documentation<NotDocumented>;
+//
+//def DebugIteratorModeling : Checker<"DebugIteratorModeling">,
+//  HelpText<"Check the analyzer's understanding of C++ iterators">,
+//  Dependencies<[DebugContainerModeling, IteratorModeling]>,
+//  Documentation<NotDocumented>;
 
 def StdCLibraryFunctionsTesterChecker : Checker<"StdCLibraryFunctionsTester">,
   HelpText<"Add test functions to the summary map, so testing of individual "

@@ -809,11 +809,3 @@ const ExplodedNode *findCallEnter(const ExplodedNode *Node, const Expr *Call) {
 }
 
 } // namespace
-
-void ento::registerIteratorModeling(CheckerManager &mgr) {
-  mgr.registerChecker<IteratorModeling>();
-}
-
-bool ento::shouldRegisterIteratorModeling(const CheckerManager &mgr) {
-  return true;
-}
