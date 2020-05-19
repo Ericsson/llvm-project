@@ -2827,6 +2827,12 @@ void BugReporter::emitReport(std::unique_ptr<BugReport> R) {
   if (!ValidSourceLoc)
     return;
 
+  // The goal of system headers is that no diagnostic report is emitted in
+  // those.
+  if (!getAnalyzerOptions().ShouldReportInSystemHeader &&
+      R->getLocation().asLocation().isInSystemHeader())
+    return;
+
   // Compute the bug report's hash to determine its equivalence class.
   llvm::FoldingSetNodeID ID;
   R->Profile(ID);

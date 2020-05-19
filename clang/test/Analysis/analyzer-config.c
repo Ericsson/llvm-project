@@ -87,6 +87,7 @@
 // CHECK-NEXT: prune-paths = true
 // CHECK-NEXT: region-store-small-struct-limit = 2
 // CHECK-NEXT: report-in-main-source-file = false
+// CHECK-NEXT: report-in-system-header = true
 // CHECK-NEXT: serialize-stats = false
 // CHECK-NEXT: silence-checkers = ""
 // CHECK-NEXT: stable-report-filename = false
@@ -99,4 +100,4 @@
 // CHECK-NEXT: unroll-loops = false
 // CHECK-NEXT: widen-loops = false
 // CHECK-NEXT: [stats]
-// CHECK-NEXT: num-entries = 96
+// CHECK-NEXT: num-entries = 97

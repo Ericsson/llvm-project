@@ -310,6 +310,10 @@ ANALYZER_OPTION(bool, ShouldEmitFixItHintsAsRemarks, "fixits-as-remarks",
                 "Emit fix-it hints as remarks for testing purposes",
                 false)
 
+ANALYZER_OPTION(bool, ShouldReportInSystemHeader, "report-in-system-header",
+                "Emit a bug report even if it is located in a system header.",
+                true)
+
 //===----------------------------------------------------------------------===//
 // Unsigned analyzer options.
 //===----------------------------------------------------------------------===//
