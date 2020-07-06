@@ -180,21 +180,6 @@ int ARMTTIImpl::getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src,
     return Cost;
   };
 
-  // Single to/from double precision conversions.
-  static const CostTblEntry NEONFltDblTbl[] = {
-    // Vector fptrunc/fpext conversions.
-    { ISD::FP_ROUND,   MVT::v2f64, 2 },
-    { ISD::FP_EXTEND,  MVT::v2f32, 2 },
-    { ISD::FP_EXTEND,  MVT::v4f32, 4 }
-  };
-
-  if (Src->isVectorTy() && ST->hasNEON() && (ISD == ISD::FP_ROUND ||
-                                          ISD == ISD::FP_EXTEND)) {
-    std::pair<int, MVT> LT = TLI->getTypeLegalizationCost(DL, Src);
-    if (const auto *Entry = CostTableLookup(NEONFltDblTbl, ISD, LT.second))
-      return AdjustCost(LT.first * Entry->Cost);
-  }
-
   EVT SrcTy = TLI->getValueType(DL, Src);
   EVT DstTy = TLI->getValueType(DL, Dst);
 
@@ -244,6 +229,18 @@ int ARMTTIImpl::getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src,
                                      DstTy.getSimpleVT(), SrcTy.getSimpleVT()))
         return AdjustCost(Entry->Cost * ST->getMVEVectorCostFactor());
     }
+
+    static const TypeConversionCostTblEntry MVEFLoadConversionTbl[] = {
+        // FPExtends are similar but also require the VCVT instructions.
+        {ISD::FP_EXTEND, MVT::v4f32, MVT::v4f16, 1},
+        {ISD::FP_EXTEND, MVT::v8f32, MVT::v8f16, 3},
+    };
+    if (SrcTy.isVector() && ST->hasMVEFloatOps()) {
+      if (const auto *Entry =
+              ConvertCostTableLookup(MVEFLoadConversionTbl, ISD,
+                                     DstTy.getSimpleVT(), SrcTy.getSimpleVT()))
+        return AdjustCost(Entry->Cost * ST->getMVEVectorCostFactor());
+    }
   }
 
   // The truncate of a store is free. This is the mirror of extends above.
@@ -259,6 +256,17 @@ int ARMTTIImpl::getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src,
     if (SrcTy.isVector() && ST->hasMVEIntegerOps()) {
       if (const auto *Entry =
               ConvertCostTableLookup(MVELoadConversionTbl, ISD, SrcTy.getSimpleVT(),
+                                     DstTy.getSimpleVT()))
+        return AdjustCost(Entry->Cost * ST->getMVEVectorCostFactor());
+    }
+
+    static const TypeConversionCostTblEntry MVEFLoadConversionTbl[] = {
+        {ISD::FP_ROUND, MVT::v4f32, MVT::v4f16, 1},
+        {ISD::FP_ROUND, MVT::v8f32, MVT::v8f16, 3},
+    };
+    if (SrcTy.isVector() && ST->hasMVEFloatOps()) {
+      if (const auto *Entry =
+              ConvertCostTableLookup(MVEFLoadConversionTbl, ISD, SrcTy.getSimpleVT(),
                                      DstTy.getSimpleVT()))
         return AdjustCost(Entry->Cost * ST->getMVEVectorCostFactor());
     }
@@ -289,6 +297,23 @@ int ARMTTIImpl::getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src,
                                              SrcTy.getSimpleVT())) {
       return AdjustCost(Entry->Cost);
     }
+  }
+
+  // Single to/from double precision conversions.
+  if (Src->isVectorTy() && ST->hasNEON() &&
+      ((ISD == ISD::FP_ROUND && SrcTy.getScalarType() == MVT::f64 &&
+        DstTy.getScalarType() == MVT::f32) ||
+       (ISD == ISD::FP_EXTEND && SrcTy.getScalarType() == MVT::f32 &&
+        DstTy.getScalarType() == MVT::f64))) {
+    static const CostTblEntry NEONFltDblTbl[] = {
+        // Vector fptrunc/fpext conversions.
+        {ISD::FP_ROUND, MVT::v2f64, 2},
+        {ISD::FP_EXTEND, MVT::v2f32, 2},
+        {ISD::FP_EXTEND, MVT::v4f32, 4}};
+
+    std::pair<int, MVT> LT = TLI->getTypeLegalizationCost(DL, Src);
+    if (const auto *Entry = CostTableLookup(NEONFltDblTbl, ISD, LT.second))
+      return AdjustCost(LT.first * Entry->Cost);
   }
 
   // Some arithmetic, load and store operations have specific instructions
@@ -468,6 +493,27 @@ int ARMTTIImpl::getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src,
                                                    ISD, DstTy.getSimpleVT(),
                                                    SrcTy.getSimpleVT()))
       return AdjustCost(Entry->Cost * ST->getMVEVectorCostFactor());
+  }
+
+  if (ISD == ISD::FP_ROUND || ISD == ISD::FP_EXTEND) {
+    // As general rule, fp converts that were not matched above are scalarized
+    // and cost 1 vcvt for each lane, so long as the instruction is available.
+    // If not it will become a series of function calls.
+    const int CallCost = getCallInstrCost(nullptr, Dst, {Src}, CostKind);
+    int Lanes = 1;
+    if (SrcTy.isFixedLengthVector())
+      Lanes = SrcTy.getVectorNumElements();
+    auto IsLegal = [this](EVT VT) {
+      EVT EltVT = VT.getScalarType();
+      return (EltVT == MVT::f32 && ST->hasVFP2Base()) ||
+             (EltVT == MVT::f64 && ST->hasFP64()) ||
+             (EltVT == MVT::f16 && ST->hasFullFP16());
+    };
+
+    if (IsLegal(SrcTy) && IsLegal(DstTy))
+      return Lanes;
+    else
+      return Lanes * CallCost;
   }
 
   // Scalar integer conversion costs.
@@ -930,6 +976,22 @@ int ARMTTIImpl::getMemoryOpCost(unsigned Opcode, Type *Src,
     // We need 4 uops for vst.1/vld.1 vs 1uop for vldr/vstr.
     std::pair<int, MVT> LT = TLI->getTypeLegalizationCost(DL, Src);
     return LT.first * 4;
+  }
+
+  // MVE can optimize a fpext(load(4xhalf)) using an extending integer load.
+  // Same for stores.
+  if (ST->hasMVEFloatOps() && isa<FixedVectorType>(Src) && I &&
+      ((Opcode == Instruction::Load && I->hasOneUse() &&
+        isa<FPExtInst>(*I->user_begin())) ||
+       (Opcode == Instruction::Store && isa<FPTruncInst>(I->getOperand(0))))) {
+    FixedVectorType *SrcVTy = cast<FixedVectorType>(Src);
+    Type *DstTy =
+        Opcode == Instruction::Load
+            ? (*I->user_begin())->getType()
+            : cast<Instruction>(I->getOperand(0))->getOperand(0)->getType();
+    if (SrcVTy->getNumElements() == 4 && SrcVTy->getScalarType()->isHalfTy() &&
+        DstTy->getScalarType()->isFloatTy())
+      return ST->getMVEVectorCostFactor();
   }
 
   int BaseCost = ST->hasMVEIntegerOps() && Src->isVectorTy()

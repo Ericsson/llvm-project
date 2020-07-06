@@ -1527,9 +1527,10 @@ SDValue SITargetLowering::lowerKernArgParameterPtr(SelectionDAG &DAG,
 
   const ArgDescriptor *InputPtrReg;
   const TargetRegisterClass *RC;
+  LLT ArgTy;
 
-  std::tie(InputPtrReg, RC)
-    = Info->getPreloadedValue(AMDGPUFunctionArgInfo::KERNARG_SEGMENT_PTR);
+  std::tie(InputPtrReg, RC, ArgTy) =
+      Info->getPreloadedValue(AMDGPUFunctionArgInfo::KERNARG_SEGMENT_PTR);
 
   MachineRegisterInfo &MRI = DAG.getMachineFunction().getRegInfo();
   MVT PtrVT = getPointerTy(DL, AMDGPUAS::CONSTANT_ADDRESS);
@@ -1675,8 +1676,9 @@ SDValue SITargetLowering::getPreloadedValue(SelectionDAG &DAG,
   AMDGPUFunctionArgInfo::PreloadedValue PVID) const {
   const ArgDescriptor *Reg;
   const TargetRegisterClass *RC;
+  LLT Ty;
 
-  std::tie(Reg, RC) = MFI.getPreloadedValue(PVID);
+  std::tie(Reg, RC, Ty) = MFI.getPreloadedValue(PVID);
   return CreateLiveInRegister(DAG, RC, Reg->getRegister(), VT);
 }
 
@@ -2580,15 +2582,18 @@ void SITargetLowering::passSpecialInputs(
   for (auto InputID : InputRegs) {
     const ArgDescriptor *OutgoingArg;
     const TargetRegisterClass *ArgRC;
+    LLT ArgTy;
 
-    std::tie(OutgoingArg, ArgRC) = CalleeArgInfo->getPreloadedValue(InputID);
+    std::tie(OutgoingArg, ArgRC, ArgTy) =
+        CalleeArgInfo->getPreloadedValue(InputID);
     if (!OutgoingArg)
       continue;
 
     const ArgDescriptor *IncomingArg;
     const TargetRegisterClass *IncomingArgRC;
-    std::tie(IncomingArg, IncomingArgRC)
-      = CallerArgInfo.getPreloadedValue(InputID);
+    LLT Ty;
+    std::tie(IncomingArg, IncomingArgRC, Ty) =
+        CallerArgInfo.getPreloadedValue(InputID);
     assert(IncomingArgRC == ArgRC);
 
     // All special arguments are ints for now.
@@ -2621,24 +2626,25 @@ void SITargetLowering::passSpecialInputs(
   // packed.
   const ArgDescriptor *OutgoingArg;
   const TargetRegisterClass *ArgRC;
+  LLT Ty;
 
-  std::tie(OutgoingArg, ArgRC) =
-    CalleeArgInfo->getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_X);
+  std::tie(OutgoingArg, ArgRC, Ty) =
+      CalleeArgInfo->getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_X);
   if (!OutgoingArg)
-    std::tie(OutgoingArg, ArgRC) =
-      CalleeArgInfo->getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_Y);
+    std::tie(OutgoingArg, ArgRC, Ty) =
+        CalleeArgInfo->getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_Y);
   if (!OutgoingArg)
-    std::tie(OutgoingArg, ArgRC) =
-      CalleeArgInfo->getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_Z);
+    std::tie(OutgoingArg, ArgRC, Ty) =
+        CalleeArgInfo->getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_Z);
   if (!OutgoingArg)
     return;
 
-  const ArgDescriptor *IncomingArgX
-    = CallerArgInfo.getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_X).first;
-  const ArgDescriptor *IncomingArgY
-    = CallerArgInfo.getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_Y).first;
-  const ArgDescriptor *IncomingArgZ
-    = CallerArgInfo.getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_Z).first;
+  const ArgDescriptor *IncomingArgX = std::get<0>(
+      CallerArgInfo.getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_X));
+  const ArgDescriptor *IncomingArgY = std::get<0>(
+      CallerArgInfo.getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_Y));
+  const ArgDescriptor *IncomingArgZ = std::get<0>(
+      CallerArgInfo.getPreloadedValue(AMDGPUFunctionArgInfo::WORKITEM_ID_Z));
 
   SDValue InputReg;
   SDLoc SL;
@@ -3880,6 +3886,7 @@ MachineBasicBlock *SITargetLowering::EmitInstrWithCustomInserter(
     MachineBasicBlock::iterator MII = MI;
     const DebugLoc &DL = MI.getDebugLoc();
     MachineOperand &Dest = MI.getOperand(0);
+    MachineOperand &CarryDest = MI.getOperand(1);
     MachineOperand &Src0 = MI.getOperand(2);
     MachineOperand &Src1 = MI.getOperand(3);
     MachineOperand &Src2 = MI.getOperand(4);
@@ -3916,6 +3923,9 @@ MachineBasicBlock *SITargetLowering::EmitInstrWithCustomInserter(
     }
 
     BuildMI(*BB, MII, DL, TII->get(Opc), Dest.getReg()).add(Src0).add(Src1);
+
+    BuildMI(*BB, MII, DL, TII->get(AMDGPU::COPY), CarryDest.getReg())
+      .addReg(AMDGPU::SCC);
     MI.eraseFromParent();
     return BB;
   }
@@ -11679,4 +11689,19 @@ bool SITargetLowering::requiresUniformRegister(MachineFunction &MF,
   }
   SmallPtrSet<const Value *, 16> Visited;
   return hasCFUser(V, Visited, Subtarget->getWavefrontSize());
+}
+
+std::pair<int, MVT>
+SITargetLowering::getTypeLegalizationCost(const DataLayout &DL,
+                                          Type *Ty) const {
+  auto Cost = TargetLoweringBase::getTypeLegalizationCost(DL, Ty);
+  auto Size = DL.getTypeSizeInBits(Ty);
+  // Maximum load or store can handle 8 dwords for scalar and 4 for
+  // vector ALU. Let's assume anything above 8 dwords is expensive
+  // even if legal.
+  if (Size <= 256)
+    return Cost;
+
+  Cost.first = (Size + 255) / 256;
+  return Cost;
 }
