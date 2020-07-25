@@ -207,7 +207,7 @@ def Shape_RankOp : Shape_Op<"rank", [NoSideEffect]> {
 
   let hasFolder = 1;
   let hasCanonicalizer = 1;
-  let verifier = [{ return ::verify(*this); }];
+  let verifier = [{ return ::verifySizeOrIndexOp(*this); }];
 }
 
 def Shape_ToExtentTensorOp : Shape_Op<"to_extent_tensor", [NoSideEffect]> {
@@ -252,7 +252,7 @@ def Shape_GetExtentOp : Shape_Op<"get_extent", [NoSideEffect]> {
   }];
 
   let hasFolder = 1;
-  let verifier = [{ return ::verify(*this); }];
+  let verifier = [{ return ::verifySizeOrIndexOp(*this); }];
 }
 
 def Shape_IndexToSizeOp : Shape_Op<"index_to_size", [NoSideEffect]> {
@@ -325,7 +325,7 @@ def Shape_MulOp : Shape_Op<"mul", [Commutative, NoSideEffect]> {
     $lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict
   }];
 
-  let verifier = [{ return ::verify(*this); }];
+  let verifier = [{ return ::verifySizeOrIndexOp(*this); }];
   let hasFolder = 1;
 }
 
@@ -333,19 +333,19 @@ def Shape_NumElementsOp : Shape_Op<"num_elements", [NoSideEffect]> {
   let summary = "Returns the number of elements for a given shape";
   let description = [{
     Returns the number of elements for a given shape which is the product of its
-    dimensions.
-
-    ```mlir
-    %product = shape.mul %lhs, %rhs
-    ```
+    extents. If the argument is of type `shape` then the result will be of type
+    `size` and potential errors will be propagated. Otherwise, if the argument
+    is and extent tensor `tensor<?xindex>` then the result will be of type
+    `index`.
   }];
 
-  let arguments = (ins Shape_ShapeType:$shape);
-  let results = (outs Shape_SizeType:$result);
+  let arguments = (ins Shape_ShapeOrExtentTensorType:$shape);
+  let results = (outs Shape_SizeOrIndexType:$result);
 
-  let assemblyFormat = "$shape attr-dict";
+  let assemblyFormat = "$shape `:` type($shape) `->` type($result) attr-dict";
 
   let hasFolder = 1;
+  let verifier = [{ return ::verifySizeOrIndexOp(*this); }];
 }
 
 def Shape_ReduceOp : Shape_Op<"reduce",
@@ -412,7 +412,7 @@ def Shape_ShapeOfOp : Shape_Op<"shape_of", [NoSideEffect]> {
 
   let assemblyFormat = "$arg `:` type($arg) `->` type($result) attr-dict";
 
-  let verifier = [{ return ::verify(*this); }];
+  let verifier = [{ return ::verifyShapeOrExtentTensorOp(*this); }];
   let hasFolder = 1;
 }
 
