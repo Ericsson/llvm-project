@@ -28,6 +28,7 @@
 namespace llvm {
 
 class AddOperator;
+class AllocaInst;
 class APInt;
 class AssumptionCache;
 class DominatorTree;
@@ -412,6 +413,12 @@ class Value;
   bool getUnderlyingObjectsForCodeGen(const Value *V,
                             SmallVectorImpl<Value *> &Objects,
                             const DataLayout &DL);
+
+  /// Finds alloca where the value comes from.
+  AllocaInst *findAllocaForValue(Value *V);
+  inline const AllocaInst *findAllocaForValue(const Value *V) {
+    return findAllocaForValue(const_cast<Value *>(V));
+  }
 
   /// Return true if the only users of this pointer are lifetime markers.
   bool onlyUsedByLifetimeMarkers(const Value *V);
