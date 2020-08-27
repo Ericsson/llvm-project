@@ -292,8 +292,7 @@ void GISelKnownBits::computeKnownBitsImpl(Register R, KnownBits &Known,
     computeKnownBitsImpl(MI.getOperand(2).getReg(), Known2, DemandedElts,
                          Depth + 1);
     // Only known if known in both the LHS and RHS.
-    Known.One &= Known2.One;
-    Known.Zero &= Known2.Zero;
+    Known &= Known2;
     break;
   }
   case TargetOpcode::G_FCMP:
@@ -385,6 +384,18 @@ void GISelKnownBits::computeKnownBitsImpl(Register R, KnownBits &Known,
     Known = Known.zextOrTrunc(BitWidth);
     if (BitWidth > SrcBitWidth)
       Known.Zero.setBitsFrom(SrcBitWidth);
+    break;
+  }
+  case TargetOpcode::G_MERGE_VALUES: {
+    Register NumOps = MI.getNumOperands();
+    unsigned OpSize = MRI.getType(MI.getOperand(1).getReg()).getSizeInBits();
+
+    for (unsigned I = 0; I != NumOps - 1; ++I) {
+      KnownBits SrcOpKnown;
+      computeKnownBitsImpl(MI.getOperand(I + 1).getReg(), SrcOpKnown,
+                           DemandedElts, Depth + 1);
+      Known.insertBits(SrcOpKnown, I * OpSize);
+    }
     break;
   }
   }
