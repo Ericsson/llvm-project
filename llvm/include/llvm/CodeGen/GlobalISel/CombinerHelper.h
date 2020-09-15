@@ -244,6 +244,24 @@ public:
   bool applyCombineShiftToUnmerge(MachineInstr &MI, const unsigned &ShiftVal);
   bool tryCombineShiftToUnmerge(MachineInstr &MI, unsigned TargetShiftAmount);
 
+  /// Transform <ty,...> G_UNMERGE(G_MERGE ty X, Y, Z) -> ty X, Y, Z.
+  bool
+  matchCombineUnmergeMergeToPlainValues(MachineInstr &MI,
+                                        SmallVectorImpl<Register> &Operands);
+  bool
+  applyCombineUnmergeMergeToPlainValues(MachineInstr &MI,
+                                        SmallVectorImpl<Register> &Operands);
+
+  /// Transform G_UNMERGE Constant -> Constant1, Constant2, ...
+  bool matchCombineUnmergeConstant(MachineInstr &MI,
+                                   SmallVectorImpl<APInt> &Csts);
+  bool applyCombineUnmergeConstant(MachineInstr &MI,
+                                   SmallVectorImpl<APInt> &Csts);
+
+  /// Transform X, Y<dead> = G_UNMERGE Z -> X = G_TRUNC Z.
+  bool matchCombineUnmergeWithDeadLanesToTrunc(MachineInstr &MI);
+  bool applyCombineUnmergeWithDeadLanesToTrunc(MachineInstr &MI);
+
   /// Transform IntToPtr(PtrToInt(x)) to x if cast is in the same address space.
   bool matchCombineI2PToP2I(MachineInstr &MI, Register &Reg);
   bool applyCombineI2PToP2I(MachineInstr &MI, Register &Reg);
@@ -271,6 +289,10 @@ public:
 
   /// Transform fneg(fneg(x)) to x.
   bool matchCombineFNegOfFNeg(MachineInstr &MI, Register &Reg);
+
+  /// Match fabs(fabs(x)) to fabs(x).
+  bool matchCombineFAbsOfFAbs(MachineInstr &MI, Register &Src);
+  bool applyCombineFAbsOfFAbs(MachineInstr &MI, Register &Src);
 
   /// Return true if any explicit use operand on \p MI is defined by a
   /// G_IMPLICIT_DEF.

@@ -1553,6 +1553,140 @@ bool CombinerHelper::applyCombineShlOfExtend(MachineInstr &MI,
   return true;
 }
 
+static Register peekThroughBitcast(Register Reg,
+                                   const MachineRegisterInfo &MRI) {
+  while (mi_match(Reg, MRI, m_GBitcast(m_Reg(Reg))))
+    ;
+
+  return Reg;
+}
+
+bool CombinerHelper::matchCombineUnmergeMergeToPlainValues(
+    MachineInstr &MI, SmallVectorImpl<Register> &Operands) {
+  assert(MI.getOpcode() == TargetOpcode::G_UNMERGE_VALUES &&
+         "Expected an unmerge");
+  Register SrcReg =
+      peekThroughBitcast(MI.getOperand(MI.getNumOperands() - 1).getReg(), MRI);
+
+  MachineInstr *SrcInstr = MRI.getVRegDef(SrcReg);
+  if (SrcInstr->getOpcode() != TargetOpcode::G_MERGE_VALUES &&
+      SrcInstr->getOpcode() != TargetOpcode::G_BUILD_VECTOR &&
+      SrcInstr->getOpcode() != TargetOpcode::G_CONCAT_VECTORS)
+    return false;
+
+  // Check the source type of the merge.
+  LLT SrcMergeTy = MRI.getType(SrcInstr->getOperand(1).getReg());
+  LLT Dst0Ty = MRI.getType(MI.getOperand(0).getReg());
+  bool SameSize = Dst0Ty.getSizeInBits() == SrcMergeTy.getSizeInBits();
+  if (SrcMergeTy != Dst0Ty && !SameSize)
+    return false;
+  // They are the same now (modulo a bitcast).
+  // We can collect all the src registers.
+  for (unsigned Idx = 1, EndIdx = SrcInstr->getNumOperands(); Idx != EndIdx;
+       ++Idx)
+    Operands.push_back(SrcInstr->getOperand(Idx).getReg());
+  return true;
+}
+
+bool CombinerHelper::applyCombineUnmergeMergeToPlainValues(
+    MachineInstr &MI, SmallVectorImpl<Register> &Operands) {
+  assert(MI.getOpcode() == TargetOpcode::G_UNMERGE_VALUES &&
+         "Expected an unmerge");
+  assert((MI.getNumOperands() - 1 == Operands.size()) &&
+         "Not enough operands to replace all defs");
+  unsigned NumElems = MI.getNumOperands() - 1;
+
+  LLT SrcTy = MRI.getType(Operands[0]);
+  LLT DstTy = MRI.getType(MI.getOperand(0).getReg());
+  bool CanReuseInputDirectly = DstTy == SrcTy;
+  Builder.setInstrAndDebugLoc(MI);
+  for (unsigned Idx = 0; Idx < NumElems; ++Idx) {
+    Register DstReg = MI.getOperand(Idx).getReg();
+    Register SrcReg = Operands[Idx];
+    if (CanReuseInputDirectly)
+      replaceRegWith(MRI, DstReg, SrcReg);
+    else
+      Builder.buildCast(DstReg, SrcReg);
+  }
+  MI.eraseFromParent();
+  return true;
+}
+
+bool CombinerHelper::matchCombineUnmergeConstant(MachineInstr &MI,
+                                                 SmallVectorImpl<APInt> &Csts) {
+  unsigned SrcIdx = MI.getNumOperands() - 1;
+  Register SrcReg = MI.getOperand(SrcIdx).getReg();
+  MachineInstr *SrcInstr = MRI.getVRegDef(SrcReg);
+  if (SrcInstr->getOpcode() != TargetOpcode::G_CONSTANT &&
+      SrcInstr->getOpcode() != TargetOpcode::G_FCONSTANT)
+    return false;
+  // Break down the big constant in smaller ones.
+  const MachineOperand &CstVal = SrcInstr->getOperand(1);
+  APInt Val = SrcInstr->getOpcode() == TargetOpcode::G_CONSTANT
+                  ? CstVal.getCImm()->getValue()
+                  : CstVal.getFPImm()->getValueAPF().bitcastToAPInt();
+
+  LLT Dst0Ty = MRI.getType(MI.getOperand(0).getReg());
+  unsigned ShiftAmt = Dst0Ty.getSizeInBits();
+  // Unmerge a constant.
+  for (unsigned Idx = 0; Idx != SrcIdx; ++Idx) {
+    Csts.emplace_back(Val.trunc(ShiftAmt));
+    Val = Val.lshr(ShiftAmt);
+  }
+
+  return true;
+}
+
+bool CombinerHelper::applyCombineUnmergeConstant(MachineInstr &MI,
+                                                 SmallVectorImpl<APInt> &Csts) {
+  assert(MI.getOpcode() == TargetOpcode::G_UNMERGE_VALUES &&
+         "Expected an unmerge");
+  assert((MI.getNumOperands() - 1 == Csts.size()) &&
+         "Not enough operands to replace all defs");
+  unsigned NumElems = MI.getNumOperands() - 1;
+  Builder.setInstrAndDebugLoc(MI);
+  for (unsigned Idx = 0; Idx < NumElems; ++Idx) {
+    Register DstReg = MI.getOperand(Idx).getReg();
+    Builder.buildConstant(DstReg, Csts[Idx]);
+  }
+
+  MI.eraseFromParent();
+  return true;
+}
+
+bool CombinerHelper::matchCombineUnmergeWithDeadLanesToTrunc(MachineInstr &MI) {
+  assert(MI.getOpcode() == TargetOpcode::G_UNMERGE_VALUES &&
+         "Expected an unmerge");
+  // Check that all the lanes are dead except the first one.
+  for (unsigned Idx = 1, EndIdx = MI.getNumDefs(); Idx != EndIdx; ++Idx) {
+    if (!MRI.use_nodbg_empty(MI.getOperand(Idx).getReg()))
+      return false;
+  }
+  return true;
+}
+
+bool CombinerHelper::applyCombineUnmergeWithDeadLanesToTrunc(MachineInstr &MI) {
+  Builder.setInstrAndDebugLoc(MI);
+  Register SrcReg = MI.getOperand(MI.getNumDefs()).getReg();
+  // Truncating a vector is going to truncate every single lane,
+  // whereas we want the full lowbits.
+  // Do the operation on a scalar instead.
+  LLT SrcTy = MRI.getType(SrcReg);
+  if (SrcTy.isVector())
+    SrcReg =
+        Builder.buildCast(LLT::scalar(SrcTy.getSizeInBits()), SrcReg).getReg(0);
+
+  Register Dst0Reg = MI.getOperand(0).getReg();
+  LLT Dst0Ty = MRI.getType(Dst0Reg);
+  if (Dst0Ty.isVector()) {
+    auto MIB = Builder.buildTrunc(LLT::scalar(Dst0Ty.getSizeInBits()), SrcReg);
+    Builder.buildCast(Dst0Reg, MIB);
+  } else
+    Builder.buildTrunc(Dst0Reg, SrcReg);
+  MI.eraseFromParent();
+  return true;
+}
+
 bool CombinerHelper::matchCombineShiftToUnmerge(MachineInstr &MI,
                                                 unsigned TargetShiftSize,
                                                 unsigned &ShiftVal) {
@@ -1817,6 +1951,21 @@ bool CombinerHelper::matchCombineFNegOfFNeg(MachineInstr &MI, Register &Reg) {
   assert(MI.getOpcode() == TargetOpcode::G_FNEG && "Expected a G_FNEG");
   Register SrcReg = MI.getOperand(1).getReg();
   return mi_match(SrcReg, MRI, m_GFNeg(m_Reg(Reg)));
+}
+
+bool CombinerHelper::matchCombineFAbsOfFAbs(MachineInstr &MI, Register &Src) {
+  assert(MI.getOpcode() == TargetOpcode::G_FABS && "Expected a G_FABS");
+  Src = MI.getOperand(1).getReg();
+  Register AbsSrc;
+  return mi_match(Src, MRI, m_GFabs(m_Reg(AbsSrc)));
+}
+
+bool CombinerHelper::applyCombineFAbsOfFAbs(MachineInstr &MI, Register &Src) {
+  assert(MI.getOpcode() == TargetOpcode::G_FABS && "Expected a G_FABS");
+  Register Dst = MI.getOperand(0).getReg();
+  MI.eraseFromParent();
+  replaceRegWith(MRI, Dst, Src);
+  return true;
 }
 
 bool CombinerHelper::matchAnyExplicitUseIsUndef(MachineInstr &MI) {

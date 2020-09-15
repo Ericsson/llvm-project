@@ -19,4 +19,4 @@ type = Library
 name = HelloNew
 parent = Transforms
 library_name = HelloNew
-required_libraries = Core
+required_libraries = Core Support
