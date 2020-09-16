@@ -202,7 +202,7 @@ def binop_left_undef_to_zero: GICombineRule<
 // replaced with undef.
 def propagate_undef_any_op: GICombineRule<
   (defs root:$root),
-  (match (wip_match_opcode G_ADD, G_FPTOSI, G_FPTOUI, G_SUB, G_XOR):$root,
+  (match (wip_match_opcode G_ADD, G_FPTOSI, G_FPTOUI, G_SUB, G_XOR, G_TRUNC):$root,
          [{ return Helper.matchAnyExplicitUseIsUndef(*${root}); }]),
   (apply [{ Helper.replaceInstWithUndef(*${root}); }])>;
 
@@ -252,6 +252,14 @@ def right_identity_zero: GICombineRule<
   (defs root:$root),
   (match (wip_match_opcode G_SUB, G_ADD, G_OR, G_XOR, G_SHL, G_ASHR, G_LSHR):$root,
     [{ return Helper.matchConstantOp(${root}->getOperand(2), 0); }]),
+  (apply [{ return Helper.replaceSingleDefInstWithOperand(*${root}, 1); }])
+>;
+
+// Fold x op 1 -> x
+def right_identity_one: GICombineRule<
+  (defs root:$root),
+  (match (wip_match_opcode G_MUL):$root,
+    [{ return Helper.matchConstantOp(${root}->getOperand(2), 1); }]),
   (apply [{ return Helper.replaceSingleDefInstWithOperand(*${root}, 1); }])
 >;
 
@@ -437,6 +445,32 @@ def unmerge_zext_to_zext : GICombineRule<
   (apply [{ return Helper.applyCombineUnmergeZExtToZExt(*${d}); }])
 >;
 
+// Fold trunc ([asz]ext x) -> x or ([asz]ext x) or (trunc x).
+def trunc_ext_fold_matchinfo : GIDefMatchData<"std::pair<Register, unsigned>">;
+def trunc_ext_fold: GICombineRule <
+  (defs root:$root, trunc_ext_fold_matchinfo:$matchinfo),
+  (match (wip_match_opcode G_TRUNC):$root,
+         [{ return Helper.matchCombineTruncOfExt(*${root}, ${matchinfo}); }]),
+  (apply [{ return Helper.applyCombineTruncOfExt(*${root}, ${matchinfo}); }])
+>;
+
+// Fold trunc (shl x, K) -> shl (trunc x), K => K < VT.getScalarSizeInBits().
+def trunc_shl_matchinfo : GIDefMatchData<"std::pair<Register, Register>">;
+def trunc_shl: GICombineRule <
+  (defs root:$root, trunc_shl_matchinfo:$matchinfo),
+  (match (wip_match_opcode G_TRUNC):$root,
+         [{ return Helper.matchCombineTruncOfShl(*${root}, ${matchinfo}); }]),
+  (apply [{ return Helper.applyCombineTruncOfShl(*${root}, ${matchinfo}); }])
+>;
+
+// Transform (mul x, -1) -> (sub 0, x)
+def mul_by_neg_one: GICombineRule <
+  (defs root:$root),
+  (match (wip_match_opcode G_MUL):$root,
+         [{ return Helper.matchConstantOp(${root}->getOperand(2), -1); }]),
+  (apply [{ return Helper.applyCombineMulByNegativeOne(*${root}); }])
+>;
+
 // FIXME: These should use the custom predicate feature once it lands.
 def undef_combines : GICombineGroup<[undef_to_fp_zero, undef_to_int_zero,
                                      undef_to_negative_one,
@@ -450,7 +484,7 @@ def identity_combines : GICombineGroup<[select_same_val, right_identity_zero,
                                         binop_same_val, binop_left_to_zero,
                                         binop_right_to_zero, p2i_to_i2p,
                                         i2p_to_p2i, anyext_trunc_fold,
-                                        fneg_fneg_fold]>;
+                                        fneg_fneg_fold, right_identity_one]>;
 
 def known_bits_simplifications : GICombineGroup<[
   and_trivial_mask, redundant_sext_inreg]>;
@@ -459,7 +493,9 @@ def width_reduction_combines : GICombineGroup<[reduce_shl_of_extend]>;
 
 def select_combines : GICombineGroup<[select_undef_cmp, select_constant_cmp]>;
 
-def trivial_combines : GICombineGroup<[copy_prop, mul_to_shl, add_p2i_to_ptradd]>;
+def trivial_combines : GICombineGroup<[copy_prop, mul_to_shl, add_p2i_to_ptradd,
+                                       mul_by_neg_one]>;
+
 def all_combines : GICombineGroup<[trivial_combines, ptr_add_immed_chain,
     combines_for_extload, combine_indexed_load_store, undef_combines,
     identity_combines, simplify_add_to_sub,
@@ -469,4 +505,4 @@ def all_combines : GICombineGroup<[trivial_combines, ptr_add_immed_chain,
     known_bits_simplifications, ext_ext_fold,
     not_cmp_fold, opt_brcond_by_inverting_cond,
     unmerge_merge, fabs_fabs_fold, unmerge_cst, unmerge_dead_to_trunc,
-    unmerge_zext_to_zext]>;
+    unmerge_zext_to_zext, trunc_ext_fold, trunc_shl]>;

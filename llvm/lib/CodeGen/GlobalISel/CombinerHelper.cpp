@@ -2008,6 +2008,19 @@ bool CombinerHelper::applyCombineExtOfExt(
   return false;
 }
 
+bool CombinerHelper::applyCombineMulByNegativeOne(MachineInstr &MI) {
+  assert(MI.getOpcode() == TargetOpcode::G_MUL && "Expected a G_MUL");
+  Register DstReg = MI.getOperand(0).getReg();
+  Register SrcReg = MI.getOperand(1).getReg();
+  LLT DstTy = MRI.getType(DstReg);
+
+  Builder.setInstrAndDebugLoc(MI);
+  Builder.buildSub(DstReg, Builder.buildConstant(DstTy, 0), SrcReg,
+                   MI.getFlags());
+  MI.eraseFromParent();
+  return true;
+}
+
 bool CombinerHelper::matchCombineFNegOfFNeg(MachineInstr &MI, Register &Reg) {
   assert(MI.getOpcode() == TargetOpcode::G_FNEG && "Expected a G_FNEG");
   Register SrcReg = MI.getOperand(1).getReg();
@@ -2026,6 +2039,84 @@ bool CombinerHelper::applyCombineFAbsOfFAbs(MachineInstr &MI, Register &Src) {
   Register Dst = MI.getOperand(0).getReg();
   MI.eraseFromParent();
   replaceRegWith(MRI, Dst, Src);
+  return true;
+}
+
+bool CombinerHelper::matchCombineTruncOfExt(
+    MachineInstr &MI, std::pair<Register, unsigned> &MatchInfo) {
+  assert(MI.getOpcode() == TargetOpcode::G_TRUNC && "Expected a G_TRUNC");
+  Register SrcReg = MI.getOperand(1).getReg();
+  MachineInstr *SrcMI = MRI.getVRegDef(SrcReg);
+  unsigned SrcOpc = SrcMI->getOpcode();
+  if (SrcOpc == TargetOpcode::G_ANYEXT || SrcOpc == TargetOpcode::G_SEXT ||
+      SrcOpc == TargetOpcode::G_ZEXT) {
+    MatchInfo = std::make_pair(SrcMI->getOperand(1).getReg(), SrcOpc);
+    return true;
+  }
+  return false;
+}
+
+bool CombinerHelper::applyCombineTruncOfExt(
+    MachineInstr &MI, std::pair<Register, unsigned> &MatchInfo) {
+  assert(MI.getOpcode() == TargetOpcode::G_TRUNC && "Expected a G_TRUNC");
+  Register SrcReg = MatchInfo.first;
+  unsigned SrcExtOp = MatchInfo.second;
+  Register DstReg = MI.getOperand(0).getReg();
+  LLT SrcTy = MRI.getType(SrcReg);
+  LLT DstTy = MRI.getType(DstReg);
+  if (SrcTy == DstTy) {
+    MI.eraseFromParent();
+    replaceRegWith(MRI, DstReg, SrcReg);
+    return true;
+  }
+  Builder.setInstrAndDebugLoc(MI);
+  if (SrcTy.getSizeInBits() < DstTy.getSizeInBits())
+    Builder.buildInstr(SrcExtOp, {DstReg}, {SrcReg});
+  else
+    Builder.buildTrunc(DstReg, SrcReg);
+  MI.eraseFromParent();
+  return true;
+}
+
+bool CombinerHelper::matchCombineTruncOfShl(
+    MachineInstr &MI, std::pair<Register, Register> &MatchInfo) {
+  assert(MI.getOpcode() == TargetOpcode::G_TRUNC && "Expected a G_TRUNC");
+  Register DstReg = MI.getOperand(0).getReg();
+  Register SrcReg = MI.getOperand(1).getReg();
+  LLT DstTy = MRI.getType(DstReg);
+  Register ShiftSrc;
+  Register ShiftAmt;
+
+  if (MRI.hasOneNonDBGUse(SrcReg) &&
+      mi_match(SrcReg, MRI, m_GShl(m_Reg(ShiftSrc), m_Reg(ShiftAmt))) &&
+      isLegalOrBeforeLegalizer(
+          {TargetOpcode::G_SHL,
+           {DstTy, getTargetLowering().getPreferredShiftAmountTy(DstTy)}})) {
+    KnownBits Known = KB->getKnownBits(ShiftAmt);
+    unsigned Size = DstTy.getSizeInBits();
+    if (Known.getBitWidth() - Known.countMinLeadingZeros() <= Log2_32(Size)) {
+      MatchInfo = std::make_pair(ShiftSrc, ShiftAmt);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool CombinerHelper::applyCombineTruncOfShl(
+    MachineInstr &MI, std::pair<Register, Register> &MatchInfo) {
+  assert(MI.getOpcode() == TargetOpcode::G_TRUNC && "Expected a G_TRUNC");
+  Register DstReg = MI.getOperand(0).getReg();
+  Register SrcReg = MI.getOperand(1).getReg();
+  LLT DstTy = MRI.getType(DstReg);
+  MachineInstr *SrcMI = MRI.getVRegDef(SrcReg);
+
+  Register ShiftSrc = MatchInfo.first;
+  Register ShiftAmt = MatchInfo.second;
+  Builder.setInstrAndDebugLoc(MI);
+  auto TruncShiftSrc = Builder.buildTrunc(DstTy, ShiftSrc);
+  auto TruncShiftAmt = Builder.buildTrunc(DstTy, ShiftAmt);
+  Builder.buildShl(DstReg, TruncShiftSrc, TruncShiftAmt, SrcMI->getFlags());
+  MI.eraseFromParent();
   return true;
 }
 
