@@ -12,6 +12,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Function.h"
 #include "mlir/IR/Module.h"
+#include "mlir/Rewrite/PatternApplicator.h"
 #include "mlir/Transforms/Utils.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -74,8 +75,7 @@ computeConversionSet(iterator_range<Region::iterator> region,
 
 /// A utility function to log a successful result for the given reason.
 template <typename... Args>
-static void logSuccess(llvm::ScopedPrinter &os, StringRef fmt,
-                       Args &&... args) {
+static void logSuccess(llvm::ScopedPrinter &os, StringRef fmt, Args &&...args) {
   LLVM_DEBUG({
     os.unindent();
     os.startLine() << "} -> SUCCESS";
@@ -88,8 +88,7 @@ static void logSuccess(llvm::ScopedPrinter &os, StringRef fmt,
 
 /// A utility function to log a failure result for the given reason.
 template <typename... Args>
-static void logFailure(llvm::ScopedPrinter &os, StringRef fmt,
-                       Args &&... args) {
+static void logFailure(llvm::ScopedPrinter &os, StringRef fmt, Args &&...args) {
   LLVM_DEBUG({
     os.unindent();
     os.startLine() << "} -> FAILURE : "
@@ -1452,7 +1451,7 @@ ConversionPattern::matchAndRewrite(Operation *op,
 
 namespace {
 /// A set of rewrite patterns that can be used to legalize a given operation.
-using LegalizationPatterns = SmallVector<const RewritePattern *, 1>;
+using LegalizationPatterns = SmallVector<const Pattern *, 1>;
 
 /// This class defines a recursive operation legalizer.
 class OperationLegalizer {
@@ -1460,7 +1459,7 @@ public:
   using LegalizationAction = ConversionTarget::LegalizationAction;
 
   OperationLegalizer(ConversionTarget &targetInfo,
-                     const OwningRewritePatternList &patterns);
+                     const FrozenRewritePatternList &patterns);
 
   /// Returns true if the given operation is known to be illegal on the target.
   bool isIllegal(Operation *op) const;
@@ -1484,12 +1483,11 @@ private:
 
   /// Return true if the given pattern may be applied to the given operation,
   /// false otherwise.
-  bool canApplyPattern(Operation *op, const RewritePattern &pattern,
+  bool canApplyPattern(Operation *op, const Pattern &pattern,
                        ConversionPatternRewriter &rewriter);
 
   /// Legalize the resultant IR after successfully applying the given pattern.
-  LogicalResult legalizePatternResult(Operation *op,
-                                      const RewritePattern &pattern,
+  LogicalResult legalizePatternResult(Operation *op, const Pattern &pattern,
                                       ConversionPatternRewriter &rewriter,
                                       RewriterState &curState);
 
@@ -1546,7 +1544,7 @@ private:
       DenseMap<OperationName, LegalizationPatterns> &legalizerPatterns);
 
   /// The current set of patterns that have been applied.
-  SmallPtrSet<const RewritePattern *, 8> appliedPatterns;
+  SmallPtrSet<const Pattern *, 8> appliedPatterns;
 
   /// The legalization information provided by the target.
   ConversionTarget &target;
@@ -1557,7 +1555,7 @@ private:
 } // namespace
 
 OperationLegalizer::OperationLegalizer(ConversionTarget &targetInfo,
-                                       const OwningRewritePatternList &patterns)
+                                       const FrozenRewritePatternList &patterns)
     : target(targetInfo), applicator(patterns) {
   // The set of patterns that can be applied to illegal operations to transform
   // them into legal ones.
@@ -1697,13 +1695,13 @@ OperationLegalizer::legalizeWithPattern(Operation *op,
   auto &rewriterImpl = rewriter.getImpl();
 
   // Functor that returns if the given pattern may be applied.
-  auto canApply = [&](const RewritePattern &pattern) {
+  auto canApply = [&](const Pattern &pattern) {
     return canApplyPattern(op, pattern, rewriter);
   };
 
   // Functor that cleans up the rewriter state after a pattern failed to match.
   RewriterState curState = rewriterImpl.getCurrentState();
-  auto onFailure = [&](const RewritePattern &pattern) {
+  auto onFailure = [&](const Pattern &pattern) {
     LLVM_DEBUG(logFailure(rewriterImpl.logger, "pattern failed to match"));
     rewriterImpl.resetState(curState);
     appliedPatterns.erase(&pattern);
@@ -1711,7 +1709,7 @@ OperationLegalizer::legalizeWithPattern(Operation *op,
 
   // Functor that performs additional legalization when a pattern is
   // successfully applied.
-  auto onSuccess = [&](const RewritePattern &pattern) {
+  auto onSuccess = [&](const Pattern &pattern) {
     auto result = legalizePatternResult(op, pattern, rewriter, curState);
     appliedPatterns.erase(&pattern);
     if (failed(result))
@@ -1724,8 +1722,7 @@ OperationLegalizer::legalizeWithPattern(Operation *op,
                                     onSuccess);
 }
 
-bool OperationLegalizer::canApplyPattern(Operation *op,
-                                         const RewritePattern &pattern,
+bool OperationLegalizer::canApplyPattern(Operation *op, const Pattern &pattern,
                                          ConversionPatternRewriter &rewriter) {
   LLVM_DEBUG({
     auto &os = rewriter.getImpl().logger;
@@ -1747,9 +1744,10 @@ bool OperationLegalizer::canApplyPattern(Operation *op,
   return true;
 }
 
-LogicalResult OperationLegalizer::legalizePatternResult(
-    Operation *op, const RewritePattern &pattern,
-    ConversionPatternRewriter &rewriter, RewriterState &curState) {
+LogicalResult
+OperationLegalizer::legalizePatternResult(Operation *op, const Pattern &pattern,
+                                          ConversionPatternRewriter &rewriter,
+                                          RewriterState &curState) {
   auto &impl = rewriter.getImpl();
 
 #ifndef NDEBUG
@@ -1877,13 +1875,12 @@ void OperationLegalizer::buildLegalizationGraph(
   // generate it.
   DenseMap<OperationName, SmallPtrSet<OperationName, 2>> parentOps;
   // A mapping between an operation and any currently invalid patterns it has.
-  DenseMap<OperationName, SmallPtrSet<const RewritePattern *, 2>>
-      invalidPatterns;
+  DenseMap<OperationName, SmallPtrSet<const Pattern *, 2>> invalidPatterns;
   // A worklist of patterns to consider for legality.
-  llvm::SetVector<const RewritePattern *> patternWorklist;
+  llvm::SetVector<const Pattern *> patternWorklist;
 
   // Build the mapping from operations to the parent ops that may generate them.
-  applicator.walkAllPatterns([&](const RewritePattern &pattern) {
+  applicator.walkAllPatterns([&](const Pattern &pattern) {
     Optional<OperationName> root = pattern.getRootKind();
 
     // If the pattern has no specific root, we can't analyze the relationship
@@ -1914,7 +1911,7 @@ void OperationLegalizer::buildLegalizationGraph(
   // recurse into itself. It would be better to perform this kind of filtering
   // at a higher level than here anyways.
   if (!anyOpLegalizerPatterns.empty()) {
-    for (const RewritePattern *pattern : patternWorklist)
+    for (const Pattern *pattern : patternWorklist)
       legalizerPatterns[*pattern->getRootKind()].push_back(pattern);
     return;
   }
@@ -1964,15 +1961,15 @@ void OperationLegalizer::computeLegalizationGraphBenefit(
   // Apply a cost model to the pattern applicator. We order patterns first by
   // depth then benefit. `legalizerPatterns` contains per-op patterns by
   // decreasing benefit.
-  applicator.applyCostModel([&](const RewritePattern &p) {
-    ArrayRef<const RewritePattern *> orderedPatternList;
-    if (Optional<OperationName> rootName = p.getRootKind())
+  applicator.applyCostModel([&](const Pattern &pattern) {
+    ArrayRef<const Pattern *> orderedPatternList;
+    if (Optional<OperationName> rootName = pattern.getRootKind())
       orderedPatternList = legalizerPatterns[*rootName];
     else
       orderedPatternList = anyOpLegalizerPatterns;
 
     // If the pattern is not found, then it was removed and cannot be matched.
-    auto it = llvm::find(orderedPatternList, &p);
+    auto it = llvm::find(orderedPatternList, &pattern);
     if (it == orderedPatternList.end())
       return PatternBenefit::impossibleToMatch();
 
@@ -2014,9 +2011,9 @@ unsigned OperationLegalizer::applyCostModelToPatterns(
   unsigned minDepth = std::numeric_limits<unsigned>::max();
 
   // Compute the depth for each pattern within the set.
-  SmallVector<std::pair<const RewritePattern *, unsigned>, 4> patternsByDepth;
+  SmallVector<std::pair<const Pattern *, unsigned>, 4> patternsByDepth;
   patternsByDepth.reserve(patterns.size());
-  for (const RewritePattern *pattern : patterns) {
+  for (const Pattern *pattern : patterns) {
     unsigned depth = 0;
     for (auto generatedOp : pattern->getGeneratedOps()) {
       unsigned generatedOpDepth = computeOpLegalizationDepth(
@@ -2035,21 +2032,21 @@ unsigned OperationLegalizer::applyCostModelToPatterns(
     return minDepth;
 
   // Sort the patterns by those likely to be the most beneficial.
-  llvm::array_pod_sort(
-      patternsByDepth.begin(), patternsByDepth.end(),
-      [](const std::pair<const RewritePattern *, unsigned> *lhs,
-         const std::pair<const RewritePattern *, unsigned> *rhs) {
-        // First sort by the smaller pattern legalization depth.
-        if (lhs->second != rhs->second)
-          return llvm::array_pod_sort_comparator<unsigned>(&lhs->second,
-                                                           &rhs->second);
+  llvm::array_pod_sort(patternsByDepth.begin(), patternsByDepth.end(),
+                       [](const std::pair<const Pattern *, unsigned> *lhs,
+                          const std::pair<const Pattern *, unsigned> *rhs) {
+                         // First sort by the smaller pattern legalization
+                         // depth.
+                         if (lhs->second != rhs->second)
+                           return llvm::array_pod_sort_comparator<unsigned>(
+                               &lhs->second, &rhs->second);
 
-        // Then sort by the larger pattern benefit.
-        auto lhsBenefit = lhs->first->getBenefit();
-        auto rhsBenefit = rhs->first->getBenefit();
-        return llvm::array_pod_sort_comparator<PatternBenefit>(&rhsBenefit,
-                                                               &lhsBenefit);
-      });
+                         // Then sort by the larger pattern benefit.
+                         auto lhsBenefit = lhs->first->getBenefit();
+                         auto rhsBenefit = rhs->first->getBenefit();
+                         return llvm::array_pod_sort_comparator<PatternBenefit>(
+                             &rhsBenefit, &lhsBenefit);
+                       });
 
   // Update the legalization pattern to use the new sorted list.
   patterns.clear();
@@ -2081,7 +2078,7 @@ enum OpConversionMode {
 // conversion mode.
 struct OperationConverter {
   explicit OperationConverter(ConversionTarget &target,
-                              const OwningRewritePatternList &patterns,
+                              const FrozenRewritePatternList &patterns,
                               OpConversionMode mode,
                               DenseSet<Operation *> *trackedOps = nullptr)
       : opLegalizer(target, patterns), mode(mode), trackedOps(trackedOps) {}
@@ -2675,7 +2672,7 @@ auto ConversionTarget::getOpInfo(OperationName op) const
 LogicalResult
 mlir::applyPartialConversion(ArrayRef<Operation *> ops,
                              ConversionTarget &target,
-                             const OwningRewritePatternList &patterns,
+                             const FrozenRewritePatternList &patterns,
                              DenseSet<Operation *> *unconvertedOps) {
   OperationConverter opConverter(target, patterns, OpConversionMode::Partial,
                                  unconvertedOps);
@@ -2683,7 +2680,7 @@ mlir::applyPartialConversion(ArrayRef<Operation *> ops,
 }
 LogicalResult
 mlir::applyPartialConversion(Operation *op, ConversionTarget &target,
-                             const OwningRewritePatternList &patterns,
+                             const FrozenRewritePatternList &patterns,
                              DenseSet<Operation *> *unconvertedOps) {
   return applyPartialConversion(llvm::makeArrayRef(op), target, patterns,
                                 unconvertedOps);
@@ -2694,13 +2691,13 @@ mlir::applyPartialConversion(Operation *op, ConversionTarget &target,
 /// operation fails.
 LogicalResult
 mlir::applyFullConversion(ArrayRef<Operation *> ops, ConversionTarget &target,
-                          const OwningRewritePatternList &patterns) {
+                          const FrozenRewritePatternList &patterns) {
   OperationConverter opConverter(target, patterns, OpConversionMode::Full);
   return opConverter.convertOperations(ops);
 }
 LogicalResult
 mlir::applyFullConversion(Operation *op, ConversionTarget &target,
-                          const OwningRewritePatternList &patterns) {
+                          const FrozenRewritePatternList &patterns) {
   return applyFullConversion(llvm::makeArrayRef(op), target, patterns);
 }
 
@@ -2713,7 +2710,7 @@ mlir::applyFullConversion(Operation *op, ConversionTarget &target,
 LogicalResult
 mlir::applyAnalysisConversion(ArrayRef<Operation *> ops,
                               ConversionTarget &target,
-                              const OwningRewritePatternList &patterns,
+                              const FrozenRewritePatternList &patterns,
                               DenseSet<Operation *> &convertedOps) {
   OperationConverter opConverter(target, patterns, OpConversionMode::Analysis,
                                  &convertedOps);
@@ -2721,7 +2718,7 @@ mlir::applyAnalysisConversion(ArrayRef<Operation *> ops,
 }
 LogicalResult
 mlir::applyAnalysisConversion(Operation *op, ConversionTarget &target,
-                              const OwningRewritePatternList &patterns,
+                              const FrozenRewritePatternList &patterns,
                               DenseSet<Operation *> &convertedOps) {
   return applyAnalysisConversion(llvm::makeArrayRef(op), target, patterns,
                                  convertedOps);
