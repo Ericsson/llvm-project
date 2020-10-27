@@ -2194,8 +2194,8 @@ void BasicBugReport::Profile(llvm::FoldingSetNodeID& hash) const {
   for (SourceRange range : Ranges) {
     if (!range.isValid())
       continue;
-    hash.AddInteger(range.getBegin().getRawEncoding());
-    hash.AddInteger(range.getEnd().getRawEncoding());
+    hash.Add(range.getBegin());
+    hash.Add(range.getEnd());
   }
 }
 
@@ -2217,8 +2217,8 @@ void PathSensitiveBugReport::Profile(llvm::FoldingSetNodeID &hash) const {
   for (SourceRange range : Ranges) {
     if (!range.isValid())
       continue;
-    hash.AddInteger(range.getBegin().getRawEncoding());
-    hash.AddInteger(range.getEnd().getRawEncoding());
+    hash.Add(range.getBegin());
+    hash.Add(range.getEnd());
   }
 }
 
