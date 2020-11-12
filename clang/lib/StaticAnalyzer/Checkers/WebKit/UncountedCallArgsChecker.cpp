@@ -185,11 +185,3 @@ public:
   }
 };
 } // namespace
-
-void ento::registerUncountedCallArgsChecker(CheckerManager &Mgr) {
-  Mgr.registerChecker<UncountedCallArgsChecker>();
-}
-
-bool ento::shouldRegisterUncountedCallArgsChecker(const CheckerManager &) {
-  return true;
-}
