@@ -6152,6 +6152,24 @@ TEST_P(ImportFunctions, CTADWithLocalTypedef) {
   ASSERT_TRUE(ToD);
 }
 
+TEST_P(ASTImporterOptionSpecificTestBase, TypedefWithAttribute) {
+  Decl *TU = getTuDecl(
+      R"(
+      namespace N {
+        typedef int X __attribute__((annotate("A")));
+      }
+      )",
+      Lang_CXX17, "input.cc");
+  auto *FromD =
+      FirstDeclMatcher<TypedefDecl>().match(TU, typedefDecl(hasName("X")));
+  auto *ToD = Import(FromD, Lang_CXX17);
+  ASSERT_TRUE(ToD);
+  ASSERT_EQ(ToD->getAttrs().size(), 1);
+  auto *ToAttr = dyn_cast<AnnotateAttr>(ToD->getAttrs()[0]);
+  ASSERT_TRUE(ToAttr);
+  EXPECT_EQ(ToAttr->getAnnotation(), "A");
+}
+
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ASTImporterLookupTableTest,
                         DefaultTestValuesForRunOptions, );
 
