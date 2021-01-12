@@ -104,6 +104,7 @@ Clang-Tidy Checks
    `cert-dcl21-cpp <cert-dcl21-cpp.html>`_,
    `cert-dcl50-cpp <cert-dcl50-cpp.html>`_,
    `cert-dcl58-cpp <cert-dcl58-cpp.html>`_,
+   `cert-env32-c <cert-env32-c.html>`_,
    `cert-env33-c <cert-env33-c.html>`_,
    `cert-err34-c <cert-err34-c.html>`_,
    `cert-err52-cpp <cert-err52-cpp.html>`_,

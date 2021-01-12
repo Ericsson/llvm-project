@@ -19,6 +19,7 @@ static_library("cert") {
     "CommandProcessorCheck.cpp",
     "DefaultOperatorNewAlignmentCheck.cpp",
     "DontModifyStdNamespaceCheck.cpp",
+    "ExitHandlerCheck.cpp",
     "FloatLoopCounter.cpp",
     "LimitedRandomnessCheck.cpp",
     "MutatingCopyCheck.cpp",

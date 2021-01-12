@@ -24,6 +24,7 @@
 #include "CommandProcessorCheck.h"
 #include "DefaultOperatorNewAlignmentCheck.h"
 #include "DontModifyStdNamespaceCheck.h"
+#include "ExitHandlerCheck.h"
 #include "FloatLoopCounter.h"
 #include "LimitedRandomnessCheck.h"
 #include "MutatingCopyCheck.h"
@@ -95,6 +96,7 @@ public:
     CheckFactories.registerCheck<bugprone::ReservedIdentifierCheck>(
         "cert-dcl37-c");
     // ENV
+    CheckFactories.registerCheck<ExitHandlerCheck>("cert-env32-c");
     CheckFactories.registerCheck<CommandProcessorCheck>("cert-env33-c");
     // FLP
     CheckFactories.registerCheck<FloatLoopCounter>("cert-flp30-c");

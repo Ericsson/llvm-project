@@ -103,6 +103,15 @@ Changes in existing checks
   Added an option `GetConfigPerFile` to support including files which use
   different naming styles.
 
+New checks
+^^^^^^^^^^
+
+- New :doc:`cert-env32-c
+  <clang-tidy/checks/cert-env32-c>` check.
+
+  Finds functions registered by ``atexit`` and ``at_quick_exit`` that are calling
+  exit functions ``_Exit``, ``exit``, ``quick_exit`` or ``longjmp``.
+
 Improvements to include-fixer
 -----------------------------
 
