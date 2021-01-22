@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Analysis/MacroExpansionContext.h"
 #include "clang/Analysis/PathDiagnostic.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/Version.h"
@@ -50,14 +51,16 @@ public:
 void ento::createSarifDiagnosticConsumer(
     AnalyzerOptions &AnalyzerOpts, PathDiagnosticConsumers &C,
     const std::string &Output, const Preprocessor &PP,
-    const cross_tu::CrossTranslationUnitContext &CTU) {
+    const cross_tu::CrossTranslationUnitContext &CTU,
+    const MacroExpansionContext &MacroExpansions) {
 
   // TODO: Emit an error here.
   if (Output.empty())
     return;
 
   C.push_back(new SarifDiagnostics(AnalyzerOpts, Output, PP.getLangOpts()));
-  createTextMinimalPathDiagnosticConsumer(AnalyzerOpts, C, Output, PP, CTU);
+  createTextMinimalPathDiagnosticConsumer(AnalyzerOpts, C, Output, PP, CTU,
+                                          MacroExpansions);
 }
 
 static StringRef getFileName(const FileEntry &FE) {

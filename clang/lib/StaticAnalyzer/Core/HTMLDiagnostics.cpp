@@ -10,10 +10,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Analysis/PathDiagnostic.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclBase.h"
 #include "clang/AST/Stmt.h"
+#include "clang/Analysis/MacroExpansionContext.h"
+#include "clang/Analysis/PathDiagnostic.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/SourceLocation.h"
@@ -135,14 +136,16 @@ private:
 void ento::createHTMLDiagnosticConsumer(
     AnalyzerOptions &AnalyzerOpts, PathDiagnosticConsumers &C,
     const std::string &OutputDir, const Preprocessor &PP,
-    const cross_tu::CrossTranslationUnitContext &CTU) {
+    const cross_tu::CrossTranslationUnitContext &CTU,
+    const MacroExpansionContext &MacroExpansions) {
 
   // FIXME: HTML is currently our default output type, but if the output
   // directory isn't specified, it acts like if it was in the minimal text
   // output mode. This doesn't make much sense, we should have the minimal text
   // as our default. In the case of backward compatibility concerns, this could
   // be preserved with -analyzer-config-compatibility-mode=true.
-  createTextMinimalPathDiagnosticConsumer(AnalyzerOpts, C, OutputDir, PP, CTU);
+  createTextMinimalPathDiagnosticConsumer(AnalyzerOpts, C, OutputDir, PP, CTU,
+                                          MacroExpansions);
 
   // TODO: Emit an error here.
   if (OutputDir.empty())
@@ -154,25 +157,30 @@ void ento::createHTMLDiagnosticConsumer(
 void ento::createHTMLSingleFileDiagnosticConsumer(
     AnalyzerOptions &AnalyzerOpts, PathDiagnosticConsumers &C,
     const std::string &OutputDir, const Preprocessor &PP,
-    const cross_tu::CrossTranslationUnitContext &CTU) {
+    const cross_tu::CrossTranslationUnitContext &CTU,
+    const MacroExpansionContext &MacroExpansions) {
 
   // TODO: Emit an error here.
   if (OutputDir.empty())
     return;
 
   C.push_back(new HTMLDiagnostics(AnalyzerOpts, OutputDir, PP, false));
-  createTextMinimalPathDiagnosticConsumer(AnalyzerOpts, C, OutputDir, PP, CTU);
+  createTextMinimalPathDiagnosticConsumer(AnalyzerOpts, C, OutputDir, PP, CTU,
+                                          MacroExpansions);
 }
 
 void ento::createPlistHTMLDiagnosticConsumer(
     AnalyzerOptions &AnalyzerOpts, PathDiagnosticConsumers &C,
     const std::string &prefix, const Preprocessor &PP,
-    const cross_tu::CrossTranslationUnitContext &CTU) {
+    const cross_tu::CrossTranslationUnitContext &CTU,
+    const MacroExpansionContext &MacroExpansions) {
   createHTMLDiagnosticConsumer(
       AnalyzerOpts, C, std::string(llvm::sys::path::parent_path(prefix)), PP,
-      CTU);
-  createPlistMultiFileDiagnosticConsumer(AnalyzerOpts, C, prefix, PP, CTU);
-  createTextMinimalPathDiagnosticConsumer(AnalyzerOpts, C, prefix, PP, CTU);
+      CTU, MacroExpansions);
+  createPlistMultiFileDiagnosticConsumer(AnalyzerOpts, C, prefix, PP, CTU,
+                                         MacroExpansions);
+  createTextMinimalPathDiagnosticConsumer(AnalyzerOpts, C, prefix, PP, CTU,
+                                          MacroExpansions);
 }
 
 //===----------------------------------------------------------------------===//
