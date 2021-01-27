@@ -1590,8 +1590,6 @@ void StdLibraryFunctionsChecker::initFunctionSummaries(
     }
 
     if (Off_tTy) {
-      Optional<RangeInt> Off_tMax = BVF.getMaxValue(*Off_tTy).getLimitedValue();
-
       // void *mmap(void *addr, size_t length, int prot, int flags, int fd,
       // off_t offset);
       addToFunctionSummaryMap(
@@ -1601,13 +1599,11 @@ void StdLibraryFunctionsChecker::initFunctionSummaries(
               .ArgConstraint(
                   ArgumentCondition(1, WithinRange, Range(1, SizeMax)))
               .ArgConstraint(
-                  ArgumentCondition(4, WithinRange, Range(0, *Off_tMax))));
+                  ArgumentCondition(4, WithinRange, Range(0, IntMax))));
     }
 
     Optional<QualType> Off64_tTy = lookupType("off64_t", ACtx);
-    Optional<RangeInt> Off64_tMax;
     if (Off64_tTy) {
-      Off64_tMax = BVF.getMaxValue(*Off_tTy).getLimitedValue();
       // void *mmap64(void *addr, size_t length, int prot, int flags, int fd,
       // off64_t offset);
       addToFunctionSummaryMap(
@@ -1617,7 +1613,7 @@ void StdLibraryFunctionsChecker::initFunctionSummaries(
               .ArgConstraint(
                   ArgumentCondition(1, WithinRange, Range(1, SizeMax)))
               .ArgConstraint(
-                  ArgumentCondition(4, WithinRange, Range(0, *Off64_tMax))));
+                  ArgumentCondition(4, WithinRange, Range(0, IntMax))));
     }
 
     // int pipe(int fildes[2]);
