@@ -87,12 +87,6 @@ public:
   /// Get a bit mask for this type.
   APInt getMask() const;
 
-  /// This method determines if the width of this IntegerType is a power-of-2
-  /// in terms of 8 bit bytes.
-  /// @returns true if this is a power-of-2 byte width.
-  /// Is this a power-of-2 byte-width IntegerType ?
-  bool isPowerOf2ByteWidth() const;
-
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const Type *T) {
     return T->getTypeID() == IntegerTyID;
@@ -289,6 +283,9 @@ public:
 
   /// isSized - Return true if this is a sized type.
   bool isSized(SmallPtrSetImpl<Type *> *Visited = nullptr) const;
+
+  /// Returns true if this struct contains a scalable vector.
+  bool containsScalableVectorType() const;
 
   /// Return true if this is a named struct that has a non-empty name.
   bool hasName() const { return SymbolTableEntry != nullptr; }

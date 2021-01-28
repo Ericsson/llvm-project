@@ -122,6 +122,8 @@ namespace clang {
     /// can happen when Clang plugins trigger additional AST deserialization.
     bool IRGenFinished = false;
 
+    bool TimerIsEnabled = false;
+
     std::unique_ptr<CodeGenerator> Gen;
 
     SmallVector<LinkModule, 4> LinkModules;
@@ -136,8 +138,7 @@ namespace clang {
                     const PreprocessorOptions &PPOpts,
                     const CodeGenOptions &CodeGenOpts,
                     const TargetOptions &TargetOpts,
-                    const LangOptions &LangOpts, bool TimePasses,
-                    const std::string &InFile,
+                    const LangOptions &LangOpts, const std::string &InFile,
                     SmallVector<LinkModule, 4> LinkModules,
                     std::unique_ptr<raw_pwrite_stream> OS, LLVMContext &C,
                     CoverageSourceInfo *CoverageInfo = nullptr)
@@ -149,8 +150,9 @@ namespace clang {
           Gen(CreateLLVMCodeGen(Diags, InFile, HeaderSearchOpts, PPOpts,
                                 CodeGenOpts, C, CoverageInfo)),
           LinkModules(std::move(LinkModules)) {
-      FrontendTimesIsEnabled = TimePasses;
-      llvm::TimePassesIsEnabled = TimePasses;
+      TimerIsEnabled = CodeGenOpts.TimePasses;
+      llvm::TimePassesIsEnabled = CodeGenOpts.TimePasses;
+      llvm::TimePassesPerRun = CodeGenOpts.TimePassesPerRun;
     }
 
     // This constructor is used in installing an empty BackendConsumer
@@ -161,7 +163,7 @@ namespace clang {
                     const PreprocessorOptions &PPOpts,
                     const CodeGenOptions &CodeGenOpts,
                     const TargetOptions &TargetOpts,
-                    const LangOptions &LangOpts, bool TimePasses,
+                    const LangOptions &LangOpts,
                     SmallVector<LinkModule, 4> LinkModules, LLVMContext &C,
                     CoverageSourceInfo *CoverageInfo = nullptr)
         : Diags(Diags), Action(Action), HeaderSearchOpts(HeaderSearchOpts),
@@ -172,8 +174,9 @@ namespace clang {
           Gen(CreateLLVMCodeGen(Diags, "", HeaderSearchOpts, PPOpts,
                                 CodeGenOpts, C, CoverageInfo)),
           LinkModules(std::move(LinkModules)) {
-      FrontendTimesIsEnabled = TimePasses;
-      llvm::TimePassesIsEnabled = TimePasses;
+      TimerIsEnabled = CodeGenOpts.TimePasses;
+      llvm::TimePassesIsEnabled = CodeGenOpts.TimePasses;
+      llvm::TimePassesPerRun = CodeGenOpts.TimePassesPerRun;
     }
     llvm::Module *getModule() const { return Gen->GetModule(); }
     std::unique_ptr<llvm::Module> takeModule() {
@@ -191,12 +194,12 @@ namespace clang {
 
       Context = &Ctx;
 
-      if (FrontendTimesIsEnabled)
+      if (TimerIsEnabled)
         LLVMIRGeneration.startTimer();
 
       Gen->Initialize(Ctx);
 
-      if (FrontendTimesIsEnabled)
+      if (TimerIsEnabled)
         LLVMIRGeneration.stopTimer();
     }
 
@@ -206,7 +209,7 @@ namespace clang {
                                      "LLVM IR generation of declaration");
 
       // Recurse.
-      if (FrontendTimesIsEnabled) {
+      if (TimerIsEnabled) {
         LLVMIRGenerationRefCount += 1;
         if (LLVMIRGenerationRefCount == 1)
           LLVMIRGeneration.startTimer();
@@ -214,7 +217,7 @@ namespace clang {
 
       Gen->HandleTopLevelDecl(D);
 
-      if (FrontendTimesIsEnabled) {
+      if (TimerIsEnabled) {
         LLVMIRGenerationRefCount -= 1;
         if (LLVMIRGenerationRefCount == 0)
           LLVMIRGeneration.stopTimer();
@@ -227,12 +230,12 @@ namespace clang {
       PrettyStackTraceDecl CrashInfo(D, SourceLocation(),
                                      Context->getSourceManager(),
                                      "LLVM IR generation of inline function");
-      if (FrontendTimesIsEnabled)
+      if (TimerIsEnabled)
         LLVMIRGeneration.startTimer();
 
       Gen->HandleInlineFunctionDefinition(D);
 
-      if (FrontendTimesIsEnabled)
+      if (TimerIsEnabled)
         LLVMIRGeneration.stopTimer();
     }
 
@@ -280,7 +283,7 @@ namespace clang {
       {
         llvm::TimeTraceScope TimeScope("Frontend");
         PrettyStackTraceString CrashInfo("Per-file LLVM IR generation");
-        if (FrontendTimesIsEnabled) {
+        if (TimerIsEnabled) {
           LLVMIRGenerationRefCount += 1;
           if (LLVMIRGenerationRefCount == 1)
             LLVMIRGeneration.startTimer();
@@ -288,7 +291,7 @@ namespace clang {
 
         Gen->HandleTranslationUnit(C);
 
-        if (FrontendTimesIsEnabled) {
+        if (TimerIsEnabled) {
           LLVMIRGenerationRefCount -= 1;
           if (LLVMIRGenerationRefCount == 0)
             LLVMIRGeneration.stopTimer();
@@ -967,8 +970,8 @@ CodeGenAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
   std::unique_ptr<BackendConsumer> Result(new BackendConsumer(
       BA, CI.getDiagnostics(), CI.getHeaderSearchOpts(),
       CI.getPreprocessorOpts(), CI.getCodeGenOpts(), CI.getTargetOpts(),
-      CI.getLangOpts(), CI.getFrontendOpts().ShowTimers, std::string(InFile),
-      std::move(LinkModules), std::move(OS), *VMContext, CoverageInfo));
+      CI.getLangOpts(), std::string(InFile), std::move(LinkModules),
+      std::move(OS), *VMContext, CoverageInfo));
   BEConsumer = Result.get();
 
   // Enable generating macro debug info only when debug info is not disabled and
@@ -1075,79 +1078,74 @@ CodeGenAction::loadModule(MemoryBufferRef MBRef) {
 }
 
 void CodeGenAction::ExecuteAction() {
-  // If this is an IR file, we have to treat it specially.
-  if (getCurrentFileKind().getLanguage() == Language::LLVM_IR) {
-    BackendAction BA = static_cast<BackendAction>(Act);
-    CompilerInstance &CI = getCompilerInstance();
-    auto &CodeGenOpts = CI.getCodeGenOpts();
-    auto &Diagnostics = CI.getDiagnostics();
-    std::unique_ptr<raw_pwrite_stream> OS =
-        GetOutputStream(CI, getCurrentFile(), BA);
-    if (BA != Backend_EmitNothing && !OS)
-      return;
-
-    SourceManager &SM = CI.getSourceManager();
-    FileID FID = SM.getMainFileID();
-    Optional<MemoryBufferRef> MainFile = SM.getBufferOrNone(FID);
-    if (!MainFile)
-      return;
-
-    TheModule = loadModule(*MainFile);
-    if (!TheModule)
-      return;
-
-    const TargetOptions &TargetOpts = CI.getTargetOpts();
-    if (TheModule->getTargetTriple() != TargetOpts.Triple) {
-      Diagnostics.Report(SourceLocation(),
-                         diag::warn_fe_override_module)
-          << TargetOpts.Triple;
-      TheModule->setTargetTriple(TargetOpts.Triple);
-    }
-
-    EmbedBitcode(TheModule.get(), CodeGenOpts, *MainFile);
-
-    LLVMContext &Ctx = TheModule->getContext();
-    Ctx.setInlineAsmDiagnosticHandler(BitcodeInlineAsmDiagHandler,
-                                      &Diagnostics);
-
-    // Set clang diagnostic handler. To do this we need to create a fake
-    // BackendConsumer.
-    BackendConsumer Result(BA, CI.getDiagnostics(), CI.getHeaderSearchOpts(),
-                           CI.getPreprocessorOpts(), CI.getCodeGenOpts(),
-                           CI.getTargetOpts(), CI.getLangOpts(),
-                           CI.getFrontendOpts().ShowTimers,
-                           std::move(LinkModules), *VMContext, nullptr);
-    // PR44896: Force DiscardValueNames as false. DiscardValueNames cannot be
-    // true here because the valued names are needed for reading textual IR.
-    Ctx.setDiscardValueNames(false);
-    Ctx.setDiagnosticHandler(
-        std::make_unique<ClangDiagnosticHandler>(CodeGenOpts, &Result));
-
-    Expected<std::unique_ptr<llvm::ToolOutputFile>> OptRecordFileOrErr =
-        setupLLVMOptimizationRemarks(
-            Ctx, CodeGenOpts.OptRecordFile, CodeGenOpts.OptRecordPasses,
-            CodeGenOpts.OptRecordFormat, CodeGenOpts.DiagnosticsWithHotness,
-            CodeGenOpts.DiagnosticsHotnessThreshold);
-
-    if (Error E = OptRecordFileOrErr.takeError()) {
-      reportOptRecordError(std::move(E), Diagnostics, CodeGenOpts);
-      return;
-    }
-    std::unique_ptr<llvm::ToolOutputFile> OptRecordFile =
-        std::move(*OptRecordFileOrErr);
-
-    EmitBackendOutput(Diagnostics, CI.getHeaderSearchOpts(), CodeGenOpts,
-                      TargetOpts, CI.getLangOpts(),
-                      CI.getTarget().getDataLayout(), TheModule.get(), BA,
-                      std::move(OS));
-
-    if (OptRecordFile)
-      OptRecordFile->keep();
+  if (getCurrentFileKind().getLanguage() != Language::LLVM_IR) {
+    this->ASTFrontendAction::ExecuteAction();
     return;
   }
 
-  // Otherwise follow the normal AST path.
-  this->ASTFrontendAction::ExecuteAction();
+  // If this is an IR file, we have to treat it specially.
+  BackendAction BA = static_cast<BackendAction>(Act);
+  CompilerInstance &CI = getCompilerInstance();
+  auto &CodeGenOpts = CI.getCodeGenOpts();
+  auto &Diagnostics = CI.getDiagnostics();
+  std::unique_ptr<raw_pwrite_stream> OS =
+      GetOutputStream(CI, getCurrentFile(), BA);
+  if (BA != Backend_EmitNothing && !OS)
+    return;
+
+  SourceManager &SM = CI.getSourceManager();
+  FileID FID = SM.getMainFileID();
+  Optional<MemoryBufferRef> MainFile = SM.getBufferOrNone(FID);
+  if (!MainFile)
+    return;
+
+  TheModule = loadModule(*MainFile);
+  if (!TheModule)
+    return;
+
+  const TargetOptions &TargetOpts = CI.getTargetOpts();
+  if (TheModule->getTargetTriple() != TargetOpts.Triple) {
+    Diagnostics.Report(SourceLocation(), diag::warn_fe_override_module)
+        << TargetOpts.Triple;
+    TheModule->setTargetTriple(TargetOpts.Triple);
+  }
+
+  EmbedBitcode(TheModule.get(), CodeGenOpts, *MainFile);
+
+  LLVMContext &Ctx = TheModule->getContext();
+  Ctx.setInlineAsmDiagnosticHandler(BitcodeInlineAsmDiagHandler, &Diagnostics);
+
+  // Set clang diagnostic handler. To do this we need to create a fake
+  // BackendConsumer.
+  BackendConsumer Result(BA, CI.getDiagnostics(), CI.getHeaderSearchOpts(),
+                         CI.getPreprocessorOpts(), CI.getCodeGenOpts(),
+                         CI.getTargetOpts(), CI.getLangOpts(),
+                         std::move(LinkModules), *VMContext, nullptr);
+  // PR44896: Force DiscardValueNames as false. DiscardValueNames cannot be
+  // true here because the valued names are needed for reading textual IR.
+  Ctx.setDiscardValueNames(false);
+  Ctx.setDiagnosticHandler(
+      std::make_unique<ClangDiagnosticHandler>(CodeGenOpts, &Result));
+
+  Expected<std::unique_ptr<llvm::ToolOutputFile>> OptRecordFileOrErr =
+      setupLLVMOptimizationRemarks(
+          Ctx, CodeGenOpts.OptRecordFile, CodeGenOpts.OptRecordPasses,
+          CodeGenOpts.OptRecordFormat, CodeGenOpts.DiagnosticsWithHotness,
+          CodeGenOpts.DiagnosticsHotnessThreshold);
+
+  if (Error E = OptRecordFileOrErr.takeError()) {
+    reportOptRecordError(std::move(E), Diagnostics, CodeGenOpts);
+    return;
+  }
+  std::unique_ptr<llvm::ToolOutputFile> OptRecordFile =
+      std::move(*OptRecordFileOrErr);
+
+  EmitBackendOutput(Diagnostics, CI.getHeaderSearchOpts(), CodeGenOpts,
+                    TargetOpts, CI.getLangOpts(),
+                    CI.getTarget().getDataLayout(), TheModule.get(), BA,
+                    std::move(OS));
+  if (OptRecordFile)
+    OptRecordFile->keep();
 }
 
 //

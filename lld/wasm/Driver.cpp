@@ -10,6 +10,7 @@
 #include "Config.h"
 #include "InputChunks.h"
 #include "InputGlobal.h"
+#include "InputTable.h"
 #include "MarkLive.h"
 #include "SymbolTable.h"
 #include "Writer.h"
@@ -21,6 +22,7 @@
 #include "lld/Common/Strings.h"
 #include "lld/Common/Version.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Object/Wasm.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
@@ -66,7 +68,7 @@ static void initLLVM() {
 
 class LinkerDriver {
 public:
-  void link(ArrayRef<const char *> argsArr);
+  void linkerMain(ArrayRef<const char *> argsArr);
 
 private:
   void createFiles(opt::InputArgList &args);
@@ -97,7 +99,7 @@ bool link(ArrayRef<const char *> args, bool canExitEarly, raw_ostream &stdoutOS,
   symtab = make<SymbolTable>();
 
   initLLVM();
-  LinkerDriver().link(args);
+  LinkerDriver().linkerMain(args);
 
   // Exit immediately if we don't need to return to the caller.
   // This saves time because the overhead of calling destructors
@@ -379,8 +381,9 @@ static void readConfigs(opt::InputArgList &args) {
   config->importTable = args.hasArg(OPT_import_table);
   config->ltoo = args::getInteger(args, OPT_lto_O, 2);
   config->ltoPartitions = args::getInteger(args, OPT_lto_partitions, 1);
-  config->ltoNewPassManager = args.hasFlag(OPT_lto_new_pass_manager,
-                                           OPT_no_lto_new_pass_manager, false);
+  config->ltoNewPassManager =
+      args.hasFlag(OPT_no_lto_legacy_pass_manager, OPT_lto_legacy_pass_manager,
+                   LLVM_ENABLE_NEW_PASS_MANAGER);
   config->ltoDebugPassManager = args.hasArg(OPT_lto_debug_pass_manager);
   config->mapFile = args.getLastArgValue(OPT_Map);
   config->optimize = args::getInteger(args, OPT_O, 0);
@@ -616,14 +619,6 @@ static void createSyntheticSymbols() {
       make<SyntheticFunction>(nullSignature, "__wasm_call_ctors"));
 
   if (config->isPic) {
-    // For PIC code we create a synthetic function __wasm_apply_relocs which
-    // is called from __wasm_call_ctors before the user-level constructors.
-    WasmSym::applyRelocs = symtab->addSyntheticFunction(
-        "__wasm_apply_relocs", WASM_SYMBOL_VISIBILITY_HIDDEN,
-        make<SyntheticFunction>(nullSignature, "__wasm_apply_relocs"));
-  }
-
-  if (config->isPic) {
     WasmSym::stackPointer =
         createUndefinedGlobal("__stack_pointer", config->is64.getValueOr(false)
                                                      ? &mutableGlobalTypeI64
@@ -645,16 +640,7 @@ static void createSyntheticSymbols() {
     WasmSym::stackPointer->markLive();
   }
 
-  if (config->sharedMemory) {
-    // Passive segments are used to avoid memory being reinitialized on each
-    // thread's instantiation. These passive segments are initialized and
-    // dropped in __wasm_init_memory, which is registered as the start function
-    WasmSym::initMemory = symtab->addSyntheticFunction(
-        "__wasm_init_memory", WASM_SYMBOL_VISIBILITY_HIDDEN,
-        make<SyntheticFunction>(nullSignature, "__wasm_init_memory"));
-    WasmSym::initMemoryFlag = symtab->addSyntheticDataSymbol(
-        "__wasm_init_memory_flag", WASM_SYMBOL_VISIBILITY_HIDDEN);
-    assert(WasmSym::initMemoryFlag);
+  if (config->sharedMemory && !config->relocatable) {
     WasmSym::tlsBase = createGlobalVariable("__tls_base", true);
     WasmSym::tlsSize = createGlobalVariable("__tls_size", false);
     WasmSym::tlsAlign = createGlobalVariable("__tls_align", false);
@@ -802,7 +788,68 @@ static void wrapSymbols(ArrayRef<WrappedSymbol> wrapped) {
     symtab->wrap(w.sym, w.real, w.wrap);
 }
 
-void LinkerDriver::link(ArrayRef<const char *> argsArr) {
+static TableSymbol *createDefinedIndirectFunctionTable(StringRef name) {
+  const uint32_t invalidIndex = -1;
+  WasmLimits limits{0, 0, 0}; // Set by the writer.
+  WasmTableType type{uint8_t(ValType::FUNCREF), limits};
+  WasmTable desc{invalidIndex, type, name};
+  InputTable *table = make<InputTable>(desc, nullptr);
+  uint32_t flags = config->exportTable ? 0 : WASM_SYMBOL_VISIBILITY_HIDDEN;
+  TableSymbol *sym = symtab->addSyntheticTable(name, flags, table);
+  sym->markLive();
+  sym->forceExport = config->exportTable;
+  return sym;
+}
+
+static TableSymbol *createUndefinedIndirectFunctionTable(StringRef name) {
+  WasmLimits limits{0, 0, 0}; // Set by the writer.
+  WasmTableType *type = make<WasmTableType>();
+  type->ElemType = uint8_t(ValType::FUNCREF);
+  type->Limits = limits;
+  StringRef module(defaultModule);
+  uint32_t flags = config->exportTable ? 0 : WASM_SYMBOL_VISIBILITY_HIDDEN;
+  flags |= WASM_SYMBOL_UNDEFINED;
+  Symbol *sym =
+      symtab->addUndefinedTable(name, name, module, flags, nullptr, type);
+  sym->markLive();
+  sym->forceExport = config->exportTable;
+  return cast<TableSymbol>(sym);
+}
+
+static TableSymbol *resolveIndirectFunctionTable() {
+  Symbol *existingTable = symtab->find(functionTableName);
+  if (existingTable) {
+    if (!isa<TableSymbol>(existingTable)) {
+      error(Twine("reserved symbol must be of type table: `") +
+            functionTableName + "`");
+      return nullptr;
+    }
+    if (existingTable->isDefined()) {
+      error(Twine("reserved symbol must not be defined in input files: `") +
+            functionTableName + "`");
+      return nullptr;
+    }
+  }
+
+  if (config->importTable) {
+    if (existingTable)
+      return cast<TableSymbol>(existingTable);
+    else
+      return createUndefinedIndirectFunctionTable(functionTableName);
+  } else if ((existingTable && existingTable->isLive()) ||
+             config->exportTable) {
+    // A defined table is required.  Either because the user request an exported
+    // table or because the table symbol is already live.  The existing table is
+    // guaranteed to be undefined due to the check above.
+    return createDefinedIndirectFunctionTable(functionTableName);
+  }
+
+  // An indirect function table will only be present in the symbol table if
+  // needed by a reloc; if we get here, we don't need one.
+  return nullptr;
+}
+
+void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
   WasmOptTable parser;
   opt::InputArgList args = parser.parse(argsArr.slice(1));
 
@@ -990,6 +1037,14 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
 
   // Do size optimizations: garbage collection
   markLive();
+
+  if (!config->relocatable) {
+    // Provide the indirect funciton table if needed.
+    WasmSym::indirectFunctionTable = resolveIndirectFunctionTable();
+
+    if (errorCount())
+      return;
+  }
 
   // Write the result to the file.
   writeResult();

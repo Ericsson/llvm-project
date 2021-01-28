@@ -3,21 +3,38 @@ include "llvm/Option/OptParser.td"
 // Flags that lld/MachO understands but ld64 doesn't. These take
 // '--' instead of '-' and use dashes instead of underscores, so
 // they don't collide with the ld64 compat options.
+def grp_lld : OptionGroup<"kind">, HelpText<"LLD-SPECIFIC">;
 
-def help : Flag<["-", "--"], "help">;
+def help : Flag<["-", "--"], "help">,
+    Group<grp_lld>;
 def help_hidden : Flag<["--"], "help-hidden">,
-  HelpText<"Display help for hidden options">;
+    HelpText<"Display help for hidden options">,
+    Group<grp_lld>;
 def color_diagnostics: Flag<["--"], "color-diagnostics">,
-  HelpText<"Alias for --color-diagnostics=always">;
+    HelpText<"Alias for --color-diagnostics=always">,
+    Group<grp_lld>;
 def no_color_diagnostics: Flag<["--"], "no-color-diagnostics">,
-  HelpText<"Alias for --color-diagnostics=never">;
+    HelpText<"Alias for --color-diagnostics=never">,
+    Group<grp_lld>;
 def color_diagnostics_eq: Joined<["--"], "color-diagnostics=">,
-  HelpText<"Use colors in diagnostics (default: auto)">,
-  MetaVarName<"[auto,always,never]">;
-def reproduce: Separate<["--"], "reproduce">;
+    HelpText<"Use colors in diagnostics (default: auto)">,
+    MetaVarName<"[auto,always,never]">,
+    Group<grp_lld>;
+def reproduce: Separate<["--"], "reproduce">,
+    Group<grp_lld>;
 def reproduce_eq: Joined<["--"], "reproduce=">,
     Alias<!cast<Separate>(reproduce)>,
-    HelpText<"Write tar file containing inputs and command to reproduce link">;
+    HelpText<"Write tar file containing inputs and command to reproduce link">,
+    Group<grp_lld>;
+def version: Flag<["--"], "version">,
+    HelpText<"Display the version number and exit">,
+    Group<grp_lld>;
+def lto_legacy_pass_manager: Flag<["--"], "lto-legacy-pass-manager">,
+    HelpText<"Use the legacy pass manager in LLVM">,
+    Group<grp_lld>;
+def no_lto_legacy_pass_manager : Flag<["--"], "no-lto-legacy-pass-manager">,
+    HelpText<"Use the new pass manager in LLVM">,
+    Group<grp_lld>;
 
 
 // This is a complete Options.td compiled from Apple's ld(1) manpage
@@ -246,7 +263,6 @@ def seg1addr : Separate<["-"], "seg1addr">,
      Group<grp_opts>;
 def no_implicit_dylibs : Flag<["-"], "no_implicit_dylibs">,
      HelpText<"Do not optimize public dylib transitive symbol references">,
-     Flags<[HelpHidden]>,
      Group<grp_opts>;
 def exported_symbols_order : Separate<["-"], "exported_symbols_order">,
      MetaVarName<"<file>">,
@@ -291,7 +307,6 @@ def mark_dead_strippable_dylib : Flag<["-"], "mark_dead_strippable_dylib">,
 def compatibility_version : Separate<["-"], "compatibility_version">,
      MetaVarName<"<version>">,
      HelpText<"Compatibility <version> of this library">,
-     Flags<[HelpHidden]>,
      Group<grp_dylib>;
 def dylib_compatibility_version : Separate<["-"], "dylib_compatibility_version">,
      MetaVarName<"<version>">,
@@ -302,7 +317,6 @@ def dylib_compatibility_version : Separate<["-"], "dylib_compatibility_version">
 def current_version : Separate<["-"], "current_version">,
      MetaVarName<"<version>">,
      HelpText<"Current <version> of this library">,
-     Flags<[HelpHidden]>,
      Group<grp_dylib>;
 def dylib_current_version : Separate<["-"], "dylib_current_version">,
      MetaVarName<"<version>">,
@@ -349,7 +363,7 @@ def bundle_loader : Separate<["-"], "bundle_loader">,
 def grp_object : OptionGroup<"object">, HelpText<"CREATING AN OBJECT FILE">;
 
 def keep_private_externs : Flag<["-"], "keep_private_externs">,
-     HelpText<"Do not convert private external symbols to static symbols">,
+     HelpText<"Do not convert private external symbols to static symbols (only valid with -r)">,
      Flags<[HelpHidden]>,
      Group<grp_object>;
 def d : Flag<["-"], "d">,
@@ -411,7 +425,6 @@ def U : Separate<["-"], "U">,
 def undefined : Separate<["-"], "undefined">,
      MetaVarName<"<treatment>">,
      HelpText<"Handle undefined symbols according to <treatment>: error, warning, suppress, or dynamic_lookup (default is error)">,
-     Flags<[HelpHidden]>,
      Group<grp_resolve>;
 def rpath : Separate<["-"], "rpath">,
      MetaVarName<"<path>">,
@@ -464,7 +477,7 @@ def dependency_info : Separate<["-"], "dependency_info">,
      Flags<[HelpHidden]>,
      Group<grp_introspect>;
 def save_temps : Flag<["-"], "save-temps">,
-     HelpText<"Save temporary files instead of deleting them">,
+     HelpText<"Save intermediate LTO compilation results">,
      Group<grp_introspect>;
 
 def grp_symtab : OptionGroup<"symtab">, HelpText<"SYMBOL TABLE OPTIMIZATIONS">;
@@ -512,7 +525,14 @@ def bitcode_symbol_map : Separate<["-"], "bitcode_symbol_map">,
 def grp_rare : OptionGroup<"rare">, HelpText<"RARELY USED">;
 
 def v : Flag<["-"], "v">,
-     HelpText<"Print the linker version">,
+     HelpText<"Print the linker version and search paths and exit">,
+     Group<grp_rare>;
+def adhoc_codesign : Flag<["-"], "adhoc_codesign">,
+     HelpText<"Write an ad-hoc code signature to the output file.">,
+     Flags<[HelpHidden]>,
+     Group<grp_rare>;
+def no_adhoc_codesign : Flag<["-"], "no_adhoc_codesign">,
+     HelpText<"Do not write an ad-hoc code signature to the output file.">,
      Group<grp_rare>;
 def version_details : Flag<["-"], "version_details">,
      HelpText<"Print the linker version in JSON form">,
@@ -675,7 +695,6 @@ def sub_library : Separate<["-"], "sub_library">,
 def sub_umbrella : Separate<["-"], "sub_umbrella">,
      MetaVarName<"<name>">,
      HelpText<"Re-export the framework as <name>">,
-     Flags<[HelpHidden]>,
      Group<grp_rare>;
 def allowable_client : Separate<["-"], "allowable_client">,
      MetaVarName<"<name>">,
@@ -840,12 +859,10 @@ def no_objc_category_merging : Flag<["-"], "no_objc_category_merging">,
 def object_path_lto : Separate<["-"], "object_path_lto">,
      MetaVarName<"<path>">,
      HelpText<"Retain any temporary mach-o file in <path> that would otherwise be deleted during LTO">,
-     Flags<[HelpHidden]>,
      Group<grp_rare>;
 def lto_library : Separate<["-"], "lto_library">,
      MetaVarName<"<path>">,
-     HelpText<"Override the default ../lib/libLTO.dylib as <path>">,
-     Flags<[HelpHidden]>,
+     HelpText<"Deprecated & ignored. LLD supports LTO directly, without using an external dylib.">,
      Group<grp_rare>;
 def cache_path_lto : Separate<["-"], "cache_path_lto">,
      MetaVarName<"<path>">,
@@ -877,7 +894,9 @@ def not_for_dyld_shared_cache : Flag<["-"], "not_for_dyld_shared_cache">,
      Group<grp_rare>;
 def mllvm : Separate<["-"], "mllvm">,
      HelpText<"Options to pass to LLVM">,
-     Flags<[HelpHidden]>,
+     Group<grp_rare>;
+def mcpu : Separate<["-"], "mcpu">,
+     HelpText<"Processor family target for LTO code generation">,
      Group<grp_rare>;
 
 def grp_deprecated : OptionGroup<"deprecated">, HelpText<"DEPRECATED">;
@@ -1209,10 +1228,6 @@ def iosmac_version_min : Flag<["-"], "iosmac_version_min">,
 def uikitformac_version_min : Flag<["-"], "uikitformac_version_min">,
      Alias<maccatalyst_version_min>,
      HelpText<"Alias for -maccatalyst_version_min">,
-     Flags<[HelpHidden]>,
-     Group<grp_undocumented>;
-def mcpu : Flag<["-"], "mcpu">,
-     HelpText<"This option is undocumented in ld64">,
      Flags<[HelpHidden]>,
      Group<grp_undocumented>;
 def no_compact_unwind : Flag<["-"], "no_compact_unwind">,

@@ -363,7 +363,7 @@ if config.android:
   for required in [26, 28, 30]:
     if android_api_level >= required:
       config.available_features.add('android-%s' % required)
-  # FIXME: Replace with appropriate version when availible.  
+  # FIXME: Replace with appropriate version when availible.
   if android_api_level > 30 or (android_api_level == 30 and android_api_codename == 'S'):
     config.available_features.add('android-thread-properties-api')
 
@@ -380,18 +380,19 @@ else:
 
 if config.host_os == 'Linux':
   # detect whether we are using glibc, and which version
-  # NB: 'ldd' is just one of the tools commonly installed as part of glibc
+  # NB: 'ldd' is just one of the tools commonly installed as part of glibc/musl
   ldd_ver_cmd = subprocess.Popen(['ldd', '--version'],
                                  stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL,
                                  env={'LANG': 'C'})
   sout, _ = ldd_ver_cmd.communicate()
-  ver_line = sout.splitlines()[0]
-  if not config.android and ver_line.startswith(b"ldd "):
+  ver_lines = sout.splitlines()
+  if not config.android and len(ver_lines) and ver_lines[0].startswith(b"ldd "):
     from distutils.version import LooseVersion
-    ver = LooseVersion(ver_line.split()[-1].decode())
+    ver = LooseVersion(ver_lines[0].split()[-1].decode())
     for required in ["2.27", "2.30"]:
       if ver >= LooseVersion(required):
-        config.available_features.add("glibc-" + required)  
+        config.available_features.add("glibc-" + required)
 
 sancovcc_path = os.path.join(config.llvm_tools_dir, "sancov")
 if os.path.exists(sancovcc_path):
@@ -581,6 +582,12 @@ if config.use_lld and config.has_lld and not config.use_lto:
   extra_cflags += ["-fuse-ld=lld"]
 elif config.use_lld and (not config.has_lld):
   config.unsupported = True
+
+# Append any extra flags passed in lit_config
+append_target_cflags = lit_config.params.get('append_target_cflags', None)
+if append_target_cflags:
+  lit_config.note('Appending to extra_cflags: "{}"'.format(append_target_cflags))
+  extra_cflags += [append_target_cflags]
 
 config.clang = " " + " ".join(run_wrapper + [config.compile_wrapper, config.clang]) + " "
 config.target_cflags = " " + " ".join(target_cflags + extra_cflags) + " "

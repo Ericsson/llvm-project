@@ -500,6 +500,7 @@ bool ELFAsmParser::ParseSectionArguments(bool IsPush, SMLoc loc) {
   int64_t Size = 0;
   StringRef GroupName;
   unsigned Flags = 0;
+  unsigned extraFlags = 0;
   const MCExpr *Subsection = nullptr;
   bool UseLastGroup = false;
   MCSymbolELF *LinkedToSym = nullptr;
@@ -531,8 +532,6 @@ bool ELFAsmParser::ParseSectionArguments(bool IsPush, SMLoc loc) {
         goto EndStmt;
       Lex();
     }
-
-    unsigned extraFlags;
 
     if (getLexer().isNot(AsmToken::String)) {
       if (!getContext().getAsmInfo()->usesSunStyleELFSectionSwitchSyntax()
@@ -652,10 +651,14 @@ EndStmt:
       !(SectionName == ".eh_frame" && Type == ELF::SHT_PROGBITS))
     Error(loc, "changed section type for " + SectionName + ", expected: 0x" +
                    utohexstr(Section->getType()));
-  if (Section->getFlags() != Flags)
+  // Check that flags are used consistently. However, the GNU assembler permits
+  // to leave out in subsequent uses of the same sections; for compatibility,
+  // do likewise.
+  if ((extraFlags || Size || !TypeName.empty()) && Section->getFlags() != Flags)
     Error(loc, "changed section flags for " + SectionName + ", expected: 0x" +
                    utohexstr(Section->getFlags()));
-  if (Section->getEntrySize() != Size)
+  if ((extraFlags || Size || !TypeName.empty()) &&
+      Section->getEntrySize() != Size)
     Error(loc, "changed section entsize for " + SectionName +
                    ", expected: " + Twine(Section->getEntrySize()));
 

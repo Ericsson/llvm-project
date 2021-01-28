@@ -495,37 +495,41 @@ def imm64ZExt32  : Operand<i64>, ImmLeaf<i64, [{
   return isUInt<32>(Imm);
 }]>;
 
-// Some r+i load/store instructions (such as LD, STD, LDU, etc.) that require
+// This is a somewhat weaker condition than actually checking for 4-byte
+// alignment. It is simply checking that the displacement can be represented
+// as an immediate that is a multiple of 4 (i.e. the requirements for DS-Form
+// instructions).
+// But some r+i load/store instructions (such as LD, STD, LDU, etc.) that require
 // restricted memrix (4-aligned) constants are alignment sensitive. If these
 // offsets are hidden behind TOC entries than the values of the lower-order
 // bits cannot be checked directly. As a result, we need to also incorporate
 // an alignment check into the relevant patterns.
 
-def aligned4load : PatFrag<(ops node:$ptr), (load node:$ptr), [{
-  return cast<LoadSDNode>(N)->getAlignment() >= 4;
+def DSFormLoad : PatFrag<(ops node:$ptr), (load node:$ptr), [{
+  return isOffsetMultipleOf(N, 4) || cast<LoadSDNode>(N)->getAlignment() >= 4;
 }]>;
-def aligned4store : PatFrag<(ops node:$val, node:$ptr),
+def DSFormStore : PatFrag<(ops node:$val, node:$ptr),
                             (store node:$val, node:$ptr), [{
-  return cast<StoreSDNode>(N)->getAlignment() >= 4;
+  return isOffsetMultipleOf(N, 4) || cast<StoreSDNode>(N)->getAlignment() >= 4;
 }]>;
-def aligned4sextloadi32 : PatFrag<(ops node:$ptr), (sextloadi32 node:$ptr), [{
-  return cast<LoadSDNode>(N)->getAlignment() >= 4;
+def DSFormSextLoadi32 : PatFrag<(ops node:$ptr), (sextloadi32 node:$ptr), [{
+  return isOffsetMultipleOf(N, 4) || cast<LoadSDNode>(N)->getAlignment() >= 4;
 }]>;
-def aligned4pre_store : PatFrag<
+def DSFormPreStore : PatFrag<
                           (ops node:$val, node:$base, node:$offset),
                           (pre_store node:$val, node:$base, node:$offset), [{
-  return cast<StoreSDNode>(N)->getAlignment() >= 4;
+  return isOffsetMultipleOf(N, 4) || cast<StoreSDNode>(N)->getAlignment() >= 4;
 }]>;
 
-def unaligned4load : PatFrag<(ops node:$ptr), (load node:$ptr), [{
-  return cast<LoadSDNode>(N)->getAlignment() < 4;
+def NonDSFormLoad : PatFrag<(ops node:$ptr), (load node:$ptr), [{
+  return cast<LoadSDNode>(N)->getAlignment() < 4 && !isOffsetMultipleOf(N, 4);
 }]>;
-def unaligned4store : PatFrag<(ops node:$val, node:$ptr),
+def NonDSFormStore : PatFrag<(ops node:$val, node:$ptr),
                               (store node:$val, node:$ptr), [{
-  return cast<StoreSDNode>(N)->getAlignment() < 4;
+  return cast<StoreSDNode>(N)->getAlignment() < 4 && !isOffsetMultipleOf(N, 4);
 }]>;
-def unaligned4sextloadi32 : PatFrag<(ops node:$ptr), (sextloadi32 node:$ptr), [{
-  return cast<LoadSDNode>(N)->getAlignment() < 4;
+def NonDSFormSextLoadi32 : PatFrag<(ops node:$ptr), (sextloadi32 node:$ptr), [{
+  return cast<LoadSDNode>(N)->getAlignment() < 4 && !isOffsetMultipleOf(N, 4);
 }]>;
 
 // This is a somewhat weaker condition than actually checking for 16-byte
@@ -1115,6 +1119,10 @@ def IsISA3_0 : Predicate<"Subtarget->isISA3_0()">;
 def HasFPU : Predicate<"Subtarget->hasFPU()">;
 def PCRelativeMemops : Predicate<"Subtarget->hasPCRelativeMemops()">;
 def IsNotISA3_1 : Predicate<"!Subtarget->isISA3_1()">;
+
+// AIX assembler may not be modern enough to support some extended mne.
+def ModernAs: Predicate<"!Subtarget->isAIXABI() || Subtarget->HasModernAIXAs">, 
+                 AssemblerPredicate<(any_of (not AIXOS), FeatureModernAIXAs)>;
 
 //===----------------------------------------------------------------------===//
 // PowerPC Multiclass Definitions.
@@ -1928,7 +1936,7 @@ def DCBZL  : DCB_Form<1014, 1, (outs), (ins memrr:$dst), "dcbzl $dst",
                       IIC_LdStDCBF, [(int_ppc_dcbzl xoaddr:$dst)]>,
                       PPC970_DGroup_Single;
 
-def DCBF   : DCB_Form_hint<86, (outs), (ins u5imm:$TH, memrr:$dst),
+def DCBF   : DCB_Form_hint<86, (outs), (ins u3imm:$TH, memrr:$dst),
                       "dcbf $dst, $TH", IIC_LdStDCBF, []>,
                       PPC970_DGroup_Single;
 
@@ -2463,7 +2471,7 @@ let mayStore = 1, mayLoad = 0, hasSideEffects = 0 in
 def STMW : DForm_1<47, (outs), (ins gprc:$rS, memri:$dst),
                    "stmw $rS, $dst", IIC_LdStLMW, []>;
 
-def SYNC : XForm_24_sync<31, 598, (outs), (ins i32imm:$L),
+def SYNC : XForm_24_sync<31, 598, (outs), (ins u2imm:$L),
                         "sync $L", IIC_LdStSync, []>;
 
 let isCodeGenOnly = 1 in {
@@ -4309,7 +4317,7 @@ def ISYNC : XLForm_2_ext<19, 150, 0, 0, 0, (outs), (ins),
 def ICBI : XForm_1a<31, 982, (outs), (ins memrr:$src),
                     "icbi $src", IIC_LdStICBI, []>;
 
-def WAIT : XForm_24_sync<31, 30, (outs), (ins i32imm:$L),
+def WAIT : XForm_24_sync<31, 30, (outs), (ins u2imm:$L),
                          "wait $L", IIC_LdStLoad, []>;
 
 def MBAR : XForm_mbar<31, 854, (outs), (ins u5imm:$MO),
@@ -4327,7 +4335,7 @@ def MTSRIN: XForm_srin<31, 242, (outs), (ins gprc:$RS, gprc:$RB),
 def MFSRIN: XForm_srin<31, 659, (outs gprc:$RS), (ins gprc:$RB),
             "mfsrin $RS, $RB", IIC_SprMFSR>;
 
-def MTMSR: XForm_mtmsr<31, 146, (outs), (ins gprc:$RS, i32imm:$L),
+def MTMSR: XForm_mtmsr<31, 146, (outs), (ins gprc:$RS, u1imm:$L),
                     "mtmsr $RS, $L", IIC_SprMTMSR>;
 
 def WRTEE: XForm_mtmsr<31, 131, (outs), (ins gprc:$RS),
@@ -4356,7 +4364,7 @@ def : InstAlias<"iccci", (ICCCI R0, R0)>, Requires<[IsPPC4xx]>;
 def MFMSR : XForm_rs<31, 83, (outs gprc:$RT), (ins),
                   "mfmsr $RT", IIC_SprMFMSR, []>;
 
-def MTMSRD : XForm_mtmsr<31, 178, (outs), (ins gprc:$RS, i32imm:$L),
+def MTMSRD : XForm_mtmsr<31, 178, (outs), (ins gprc:$RS, u1imm:$L),
                     "mtmsrd $RS, $L", IIC_SprMTMSRD>;
 
 def MCRFS : XLForm_3<63, 64, (outs crrc:$BF), (ins crrc:$BFA),
@@ -4376,11 +4384,11 @@ def : InstAlias<"mtfsfi. $BF, $U", (MTFSFI_rec crrc:$BF, i32imm:$U, 0)>;
 let Predicates = [HasFPU] in {
 let Defs = [RM] in {
 def MTFSF : XFLForm_1<63, 711, (outs),
-                      (ins i32imm:$FLM, f8rc:$FRB, i32imm:$L, i32imm:$W),
+                      (ins i32imm:$FLM, f8rc:$FRB, u1imm:$L, i32imm:$W),
                       "mtfsf $FLM, $FRB, $L, $W", IIC_IntMFFS, []>;
 let Defs = [CR1] in
 def MTFSF_rec : XFLForm_1<63, 711, (outs),
-                       (ins i32imm:$FLM, f8rc:$FRB, i32imm:$L, i32imm:$W),
+                       (ins i32imm:$FLM, f8rc:$FRB, u1imm:$L, i32imm:$W),
                        "mtfsf. $FLM, $FRB, $L, $W", IIC_IntMFFS, []>, isRecordForm;
 }
 
@@ -4645,8 +4653,11 @@ def : InstAlias<"mtmsr $RS", (MTMSR gprc:$RS, 0)>;
 def : InstAlias<"mtxer $Rx", (MTSPR 1, gprc:$Rx)>;
 def : InstAlias<"mfxer $Rx", (MFSPR gprc:$Rx, 1)>;
 
+//Disable this alias on AIX for now because as does not support them.
+let Predicates = [ModernAs] in {
 def : InstAlias<"mtudscr $Rx", (MTSPR 3, gprc:$Rx)>;
 def : InstAlias<"mfudscr $Rx", (MFSPR gprc:$Rx, 3)>;
+}
 
 def : InstAlias<"mfrtcu $Rx", (MFSPR gprc:$Rx, 4)>;
 def : InstAlias<"mfrtcl $Rx", (MFSPR gprc:$Rx, 5)>;

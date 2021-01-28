@@ -21,11 +21,14 @@
 #include "flang/Parser/provenance.h"
 #include "flang/Parser/unparse.h"
 #include "flang/Semantics/expression.h"
+#include "flang/Semantics/runtime-type-info.h"
 #include "flang/Semantics/semantics.h"
 #include "flang/Semantics/unparse-with-symbols.h"
+#include "flang/Version.inc"
 #include "llvm/Support/Errno.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdio>
 #include <cstring>
@@ -36,8 +39,6 @@
 #include <stdlib.h>
 #include <string>
 #include <vector>
-
-#include "f18_version.h"
 
 static std::list<std::string> argList(int argc, char *const argv[]) {
   std::list<std::string> result;
@@ -83,7 +84,7 @@ struct DriverOptions {
   bool verbose{false}; // -v
   bool compileOnly{false}; // -c
   std::string outputPath; // -o path
-  std::vector<std::string> searchDirectories{"."s}; // -I dir
+  std::vector<std::string> searchDirectories; // -I dir
   std::string moduleDirectory{"."s}; // -module dir
   std::string moduleFileSuffix{".mod"}; // -moduleSuffix suff
   bool forcedForm{false}; // -Mfixed or -Mfree appeared
@@ -208,7 +209,7 @@ std::string CompileFortran(std::string path, Fortran::parser::Options options,
   parsing.Prescan(path, options);
   if (!parsing.messages().empty() &&
       (driver.warningsAreErrors || parsing.messages().AnyFatalError())) {
-    llvm::errs() << driver.prefix << "could not scan " << path << '\n';
+    llvm::errs() << driver.prefix << "Could not scan " << path << '\n';
     parsing.messages().Emit(llvm::errs(), allCookedSources);
     exitStatus = EXIT_FAILURE;
     return {};
@@ -231,14 +232,14 @@ std::string CompileFortran(std::string path, Fortran::parser::Options options,
   parsing.messages().Emit(llvm::errs(), allCookedSources);
   if (!parsing.consumedWholeFile()) {
     parsing.EmitMessage(llvm::errs(), parsing.finalRestingPlace(),
-        "parser FAIL (final position)");
+        "Parser FAIL (final position)");
     exitStatus = EXIT_FAILURE;
     return {};
   }
   if ((!parsing.messages().empty() &&
           (driver.warningsAreErrors || parsing.messages().AnyFatalError())) ||
       !parsing.parseTree()) {
-    llvm::errs() << driver.prefix << "could not parse " << path << '\n';
+    llvm::errs() << driver.prefix << "Could not parse " << path << '\n';
     exitStatus = EXIT_FAILURE;
     return {};
   }
@@ -253,16 +254,25 @@ std::string CompileFortran(std::string path, Fortran::parser::Options options,
         parsing.cooked().AsCharBlock(), driver.debugModuleWriter};
     semantics.Perform();
     semantics.EmitMessages(llvm::errs());
-    if (driver.dumpSymbols) {
-      semantics.DumpSymbols(llvm::outs());
-    }
     if (semantics.AnyFatalError()) {
-      llvm::errs() << driver.prefix << "semantic errors in " << path << '\n';
+      if (driver.dumpSymbols) {
+        semantics.DumpSymbols(llvm::outs());
+      }
+      llvm::errs() << driver.prefix << "Semantic errors in " << path << '\n';
       exitStatus = EXIT_FAILURE;
       if (driver.dumpParseTree) {
         Fortran::parser::DumpTree(llvm::outs(), parseTree, &asFortran);
       }
       return {};
+    }
+    auto tables{
+        Fortran::semantics::BuildRuntimeDerivedTypeTables(semanticsContext)};
+    if (!tables.schemata) {
+      llvm::errs() << driver.prefix
+                   << "could not find module file for __fortran_type_info\n";
+    }
+    if (driver.dumpSymbols) {
+      semantics.DumpSymbols(llvm::outs());
     }
     if (driver.dumpUnparseWithSymbols) {
       Fortran::semantics::UnparseWithSymbols(
@@ -379,8 +389,7 @@ void Link(std::vector<std::string> &liblist, std::vector<std::string> &objects,
 
 int printVersion() {
   llvm::errs() << "\nf18 compiler (under development), version "
-               << __FLANG_MAJOR__ << "." << __FLANG_MINOR__ << "."
-               << __FLANG_PATCHLEVEL__ << "\n";
+               << FLANG_VERSION_STRING << "\n";
   return exitStatus;
 }
 
@@ -405,11 +414,13 @@ int main(int argc, char *const argv[]) {
   options.predefinitions.emplace_back("__F18_MAJOR__", "1");
   options.predefinitions.emplace_back("__F18_MINOR__", "1");
   options.predefinitions.emplace_back("__F18_PATCHLEVEL__", "1");
-  options.predefinitions.emplace_back("__flang__", __FLANG__);
-  options.predefinitions.emplace_back("__flang_major__", __FLANG_MAJOR__);
-  options.predefinitions.emplace_back("__flang_minor__", __FLANG_MINOR__);
+  options.predefinitions.emplace_back("__flang__", FLANG_VERSION_STRING);
   options.predefinitions.emplace_back(
-      "__flang_patchlevel__", __FLANG_PATCHLEVEL__);
+      "__flang_major__", FLANG_VERSION_MAJOR_STRING);
+  options.predefinitions.emplace_back(
+      "__flang_minor__", FLANG_VERSION_MINOR_STRING);
+  options.predefinitions.emplace_back(
+      "__flang_patchlevel__", FLANG_VERSION_PATCHLEVEL_STRING);
 #if __x86_64__
   options.predefinitions.emplace_back("__x86_64__", "1");
 #endif
@@ -479,7 +490,7 @@ int main(int argc, char *const argv[]) {
       driver.warnOnNonstandardUsage = true;
     } else if (arg == "-fopenacc") {
       options.features.Enable(Fortran::common::LanguageFeature::OpenACC);
-      options.predefinitions.emplace_back("_OPENACC", "201911");
+      options.predefinitions.emplace_back("_OPENACC", "202011");
     } else if (arg == "-fopenmp") {
       options.features.Enable(Fortran::common::LanguageFeature::OpenMP);
       options.predefinitions.emplace_back("_OPENMP", "201511");
@@ -655,6 +666,8 @@ int main(int argc, char *const argv[]) {
       return exitStatus;
     } else if (arg == "-V" || arg == "--version") {
       return printVersion();
+    } else if (arg == "-fdebug-stack-trace") {
+      llvm::sys::PrintStackTraceOnErrorSignal(llvm::StringRef{}, true);
     } else {
       driver.F18_FCArgs.push_back(arg);
       if (arg == "-v") {

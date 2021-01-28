@@ -211,6 +211,18 @@ namespace {
     /// live interval update is costly.
     void lateLiveIntervalUpdate();
 
+    /// Check if the incoming value defined by a COPY at \p SLRQ in the subrange
+    /// has no value defined in the predecessors. If the incoming value is the
+    /// same as defined by the copy itself, the value is considered undefined.
+    bool copyValueUndefInPredecessors(LiveRange &S,
+                                      const MachineBasicBlock *MBB,
+                                      LiveQueryResult SLRQ);
+
+    /// Set necessary undef flags on subregister uses after pruning out undef
+    /// lane segments from the subrange.
+    void setUndefOnPrunedSubRegUses(LiveInterval &LI, Register Reg,
+                                    LaneBitmask PrunedLanes);
+
     /// Attempt to join intervals corresponding to SrcReg/DstReg, which are the
     /// src/dst of the copy instruction CopyMI.  This returns true if the copy
     /// was successfully coalesced away. If it is not currently possible to
@@ -430,7 +442,7 @@ bool CoalescerPair::setRegisters(const MachineInstr *MI) {
   Flipped = CrossClass = false;
 
   Register Src, Dst;
-  unsigned SrcSub, DstSub;
+  unsigned SrcSub = 0, DstSub = 0;
   if (!isMoveInstr(TRI, MI, Src, Dst, SrcSub, DstSub))
     return false;
   Partial = SrcSub || DstSub;
@@ -525,7 +537,7 @@ bool CoalescerPair::isCoalescable(const MachineInstr *MI) const {
   if (!MI)
     return false;
   Register Src, Dst;
-  unsigned SrcSub, DstSub;
+  unsigned SrcSub = 0, DstSub = 0;
   if (!isMoveInstr(TRI, MI, Src, Dst, SrcSub, DstSub))
     return false;
 
@@ -1578,7 +1590,7 @@ MachineInstr *RegisterCoalescer::eliminateUndefCopy(MachineInstr *CopyMI) {
   // CoalescerPair may have a new register class with adjusted subreg indices
   // at this point.
   Register SrcReg, DstReg;
-  unsigned SrcSubIdx, DstSubIdx;
+  unsigned SrcSubIdx = 0, DstSubIdx = 0;
   if(!isMoveInstr(*TRI, CopyMI, SrcReg, DstReg, SrcSubIdx, DstSubIdx))
     return nullptr;
 
@@ -1809,6 +1821,49 @@ bool RegisterCoalescer::canJoinPhys(const CoalescerPair &CP) {
   return false;
 }
 
+bool RegisterCoalescer::copyValueUndefInPredecessors(
+    LiveRange &S, const MachineBasicBlock *MBB, LiveQueryResult SLRQ) {
+  for (const MachineBasicBlock *Pred : MBB->predecessors()) {
+    SlotIndex PredEnd = LIS->getMBBEndIdx(Pred);
+    if (VNInfo *V = S.getVNInfoAt(PredEnd.getPrevSlot())) {
+      // If this is a self loop, we may be reading the same value.
+      if (V->id != SLRQ.valueOutOrDead()->id)
+        return false;
+    }
+  }
+
+  return true;
+}
+
+void RegisterCoalescer::setUndefOnPrunedSubRegUses(LiveInterval &LI,
+                                                   Register Reg,
+                                                   LaneBitmask PrunedLanes) {
+  // If we had other instructions in the segment reading the undef sublane
+  // value, we need to mark them with undef.
+  for (MachineOperand &MO : MRI->use_nodbg_operands(Reg)) {
+    unsigned SubRegIdx = MO.getSubReg();
+    if (SubRegIdx == 0 || MO.isUndef())
+      continue;
+
+    LaneBitmask SubRegMask = TRI->getSubRegIndexLaneMask(SubRegIdx);
+    SlotIndex Pos = LIS->getInstructionIndex(*MO.getParent());
+    for (LiveInterval::SubRange &S : LI.subranges()) {
+      if (!S.liveAt(Pos) && (PrunedLanes & SubRegMask).any()) {
+        MO.setIsUndef();
+        break;
+      }
+    }
+  }
+
+  LI.removeEmptySubRanges();
+
+  // A def of a subregister may be a use of other register lanes. Replacing
+  // such a def with a def of a different register will eliminate the use,
+  // and may cause the recorded live range to be larger than the actual
+  // liveness in the program IR.
+  LIS->shrinkToUses(&LI);
+}
+
 bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
   Again = false;
   LLVM_DEBUG(dbgs() << LIS->getInstructionIndex(*CopyMI) << '\t' << *CopyMI);
@@ -1868,16 +1923,35 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
       VNInfo *ReadVNI = LRQ.valueIn();
       assert(ReadVNI && "No value before copy and no <undef> flag.");
       assert(ReadVNI != DefVNI && "Cannot read and define the same value.");
-      LI.MergeValueNumberInto(DefVNI, ReadVNI);
+
+      // Track incoming undef lanes we need to eliminate from the subrange.
+      LaneBitmask PrunedLanes;
+      MachineBasicBlock *MBB = CopyMI->getParent();
 
       // Process subregister liveranges.
       for (LiveInterval::SubRange &S : LI.subranges()) {
         LiveQueryResult SLRQ = S.Query(CopyIdx);
         if (VNInfo *SDefVNI = SLRQ.valueDefined()) {
-          VNInfo *SReadVNI = SLRQ.valueIn();
-          S.MergeValueNumberInto(SDefVNI, SReadVNI);
+          if (VNInfo *SReadVNI = SLRQ.valueIn())
+            SDefVNI = S.MergeValueNumberInto(SDefVNI, SReadVNI);
+
+          // If this copy introduced an undef subrange from an incoming value,
+          // we need to eliminate the undef live in values from the subrange.
+          if (copyValueUndefInPredecessors(S, MBB, SLRQ)) {
+            LLVM_DEBUG(dbgs() << "Incoming sublane value is undef at copy\n");
+            PrunedLanes |= S.LaneMask;
+            S.removeValNo(SDefVNI);
+          }
         }
       }
+
+      LI.MergeValueNumberInto(DefVNI, ReadVNI);
+      if (PrunedLanes.any()) {
+        LLVM_DEBUG(dbgs() << "Pruning undef incoming lanes: "
+                          << PrunedLanes << '\n');
+        setUndefOnPrunedSubRegUses(LI, CP.getSrcReg(), PrunedLanes);
+      }
+
       LLVM_DEBUG(dbgs() << "\tMerged values:          " << LI << '\n');
     }
     deleteInstr(CopyMI);
@@ -1892,7 +1966,7 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
     if (!canJoinPhys(CP)) {
       // Before giving up coalescing, if definition of source is defined by
       // trivial computation, try rematerializing it.
-      bool IsDefCopy;
+      bool IsDefCopy = false;
       if (reMaterializeTrivialDef(CP, CopyMI, IsDefCopy))
         return true;
       if (IsDefCopy)
@@ -1931,7 +2005,7 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
 
     // If definition of source is defined by trivial computation, try
     // rematerializing it.
-    bool IsDefCopy;
+    bool IsDefCopy = false;
     if (reMaterializeTrivialDef(CP, CopyMI, IsDefCopy))
       return true;
 
@@ -3724,7 +3798,7 @@ bool RegisterCoalescer::applyTerminalRule(const MachineInstr &Copy) const {
   if (!UseTerminalRule)
     return false;
   Register SrcReg, DstReg;
-  unsigned SrcSubReg, DstSubReg;
+  unsigned SrcSubReg = 0, DstSubReg = 0;
   if (!isMoveInstr(*TRI, &Copy, SrcReg, DstReg, SrcSubReg, DstSubReg))
     return false;
   // Check if the destination of this copy has any other affinity.
@@ -3749,7 +3823,7 @@ bool RegisterCoalescer::applyTerminalRule(const MachineInstr &Copy) const {
     if (&MI == &Copy || !MI.isCopyLike() || MI.getParent() != OrigBB)
       continue;
     Register OtherSrcReg, OtherReg;
-    unsigned OtherSrcSubReg, OtherSubReg;
+    unsigned OtherSrcSubReg = 0, OtherSubReg = 0;
     if (!isMoveInstr(*TRI, &Copy, OtherSrcReg, OtherReg, OtherSrcSubReg,
                 OtherSubReg))
       return false;

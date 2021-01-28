@@ -15,7 +15,6 @@
 #include "llvm/Frontend/OpenMP/OMPIRBuilder.h"
 
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/DebugInfo.h"
@@ -127,7 +126,7 @@ Function *OpenMPIRBuilder::getOrCreateRuntimeFunctionPtr(RuntimeFunction FnID) {
 
 void OpenMPIRBuilder::initialize() { initializeTypes(M); }
 
-void OpenMPIRBuilder::finalize() {
+void OpenMPIRBuilder::finalize(bool AllowExtractorSinking) {
   SmallPtrSet<BasicBlock *, 32> ParallelRegionBlockSet;
   SmallVector<BasicBlock *, 32> Blocks;
   for (OutlineInfo &OI : OutlineInfos) {
@@ -170,6 +169,25 @@ void OpenMPIRBuilder::finalize() {
       BasicBlock &ArtificialEntry = OutlinedFn->getEntryBlock();
       assert(ArtificialEntry.getUniqueSuccessor() == OI.EntryBB);
       assert(OI.EntryBB->getUniquePredecessor() == &ArtificialEntry);
+      if (AllowExtractorSinking) {
+        // Move instructions from the to-be-deleted ArtificialEntry to the entry
+        // basic block of the parallel region. CodeExtractor may have sunk
+        // allocas/bitcasts for values that are solely used in the outlined
+        // region and do not escape.
+        assert(!ArtificialEntry.empty() &&
+               "Expected instructions to sink in the outlined region");
+        for (BasicBlock::iterator It = ArtificialEntry.begin(),
+                                  End = ArtificialEntry.end();
+             It != End;) {
+          Instruction &I = *It;
+          It++;
+
+          if (I.isTerminator())
+            continue;
+
+          I.moveBefore(*OI.EntryBB, OI.EntryBB->getFirstInsertionPt());
+        }
+      }
       OI.EntryBB->moveBefore(&ArtificialEntry);
       ArtificialEntry.eraseFromParent();
     }
@@ -858,44 +876,43 @@ OpenMPIRBuilder::createMaster(const LocationDescription &Loc,
                               /*Conditional*/ true, /*hasFinalize*/ true);
 }
 
-CanonicalLoopInfo *
-OpenMPIRBuilder::createCanonicalLoop(const LocationDescription &Loc,
-                                     LoopBodyGenCallbackTy BodyGenCB,
-                                     Value *TripCount) {
-  BasicBlock *BB = Loc.IP.getBlock();
-  BasicBlock *NextBB = BB->getNextNode();
-  Function *F = BB->getParent();
+CanonicalLoopInfo *OpenMPIRBuilder::createLoopSkeleton(
+    DebugLoc DL, Value *TripCount, Function *F, BasicBlock *PreInsertBefore,
+    BasicBlock *PostInsertBefore, const Twine &Name) {
+  Module *M = F->getParent();
+  LLVMContext &Ctx = M->getContext();
   Type *IndVarTy = TripCount->getType();
 
   // Create the basic block structure.
   BasicBlock *Preheader =
-      BasicBlock::Create(M.getContext(), "omp_for.preheader", F, NextBB);
+      BasicBlock::Create(Ctx, "omp_" + Name + ".preheader", F, PreInsertBefore);
   BasicBlock *Header =
-      BasicBlock::Create(M.getContext(), "omp_for.header", F, NextBB);
+      BasicBlock::Create(Ctx, "omp_" + Name + ".header", F, PreInsertBefore);
   BasicBlock *Cond =
-      BasicBlock::Create(M.getContext(), "omp_for.cond", F, NextBB);
+      BasicBlock::Create(Ctx, "omp_" + Name + ".cond", F, PreInsertBefore);
   BasicBlock *Body =
-      BasicBlock::Create(M.getContext(), "omp_for.body", F, NextBB);
+      BasicBlock::Create(Ctx, "omp_" + Name + ".body", F, PreInsertBefore);
   BasicBlock *Latch =
-      BasicBlock::Create(M.getContext(), "omp_for.inc", F, NextBB);
+      BasicBlock::Create(Ctx, "omp_" + Name + ".inc", F, PostInsertBefore);
   BasicBlock *Exit =
-      BasicBlock::Create(M.getContext(), "omp_for.exit", F, NextBB);
+      BasicBlock::Create(Ctx, "omp_" + Name + ".exit", F, PostInsertBefore);
   BasicBlock *After =
-      BasicBlock::Create(M.getContext(), "omp_for.after", F, NextBB);
+      BasicBlock::Create(Ctx, "omp_" + Name + ".after", F, PostInsertBefore);
 
-  updateToLocation(Loc);
-  Builder.CreateBr(Preheader);
+  // Use specified DebugLoc for new instructions.
+  Builder.SetCurrentDebugLocation(DL);
 
   Builder.SetInsertPoint(Preheader);
   Builder.CreateBr(Header);
 
   Builder.SetInsertPoint(Header);
-  PHINode *IndVarPHI = Builder.CreatePHI(IndVarTy, 2, "omp_for.iv");
+  PHINode *IndVarPHI = Builder.CreatePHI(IndVarTy, 2, "omp_" + Name + ".iv");
   IndVarPHI->addIncoming(ConstantInt::get(IndVarTy, 0), Preheader);
   Builder.CreateBr(Cond);
 
   Builder.SetInsertPoint(Cond);
-  Value *Cmp = Builder.CreateICmpULT(IndVarPHI, TripCount, "omp_for.cmp");
+  Value *Cmp =
+      Builder.CreateICmpULT(IndVarPHI, TripCount, "omp_" + Name + ".cmp");
   Builder.CreateCondBr(Cmp, Body, Exit);
 
   Builder.SetInsertPoint(Body);
@@ -903,15 +920,12 @@ OpenMPIRBuilder::createCanonicalLoop(const LocationDescription &Loc,
 
   Builder.SetInsertPoint(Latch);
   Value *Next = Builder.CreateAdd(IndVarPHI, ConstantInt::get(IndVarTy, 1),
-                                  "omp_for.next", /*HasNUW=*/true);
+                                  "omp_" + Name + ".next", /*HasNUW=*/true);
   Builder.CreateBr(Header);
   IndVarPHI->addIncoming(Next, Latch);
 
   Builder.SetInsertPoint(Exit);
   Builder.CreateBr(After);
-
-  // After all control flow has been created, insert the body user code.
-  BodyGenCB(InsertPointTy(Body, Body->begin()), IndVarPHI);
 
   // Remember and return the canonical control flow.
   LoopInfos.emplace_front();
@@ -933,9 +947,43 @@ OpenMPIRBuilder::createCanonicalLoop(const LocationDescription &Loc,
   return CL;
 }
 
+CanonicalLoopInfo *
+OpenMPIRBuilder::createCanonicalLoop(const LocationDescription &Loc,
+                                     LoopBodyGenCallbackTy BodyGenCB,
+                                     Value *TripCount, const Twine &Name) {
+  BasicBlock *BB = Loc.IP.getBlock();
+  BasicBlock *NextBB = BB->getNextNode();
+
+  CanonicalLoopInfo *CL = createLoopSkeleton(Loc.DL, TripCount, BB->getParent(),
+                                             NextBB, NextBB, Name);
+  BasicBlock *After = CL->getAfter();
+
+  // If location is not set, don't connect the loop.
+  if (updateToLocation(Loc)) {
+    // Split the loop at the insertion point: Branch to the preheader and move
+    // every following instruction to after the loop (the After BB). Also, the
+    // new successor is the loop's after block.
+    Builder.CreateBr(CL->Preheader);
+    After->getInstList().splice(After->begin(), BB->getInstList(),
+                                Builder.GetInsertPoint(), BB->end());
+    After->replaceSuccessorsPhiUsesWith(BB, After);
+  }
+
+  // Emit the body content. We do it after connecting the loop to the CFG to
+  // avoid that the callback encounters degenerate BBs.
+  BodyGenCB(CL->getBodyIP(), CL->getIndVar());
+
+#ifndef NDEBUG
+  CL->assertOK();
+#endif
+  return CL;
+}
+
 CanonicalLoopInfo *OpenMPIRBuilder::createCanonicalLoop(
     const LocationDescription &Loc, LoopBodyGenCallbackTy BodyGenCB,
-    Value *Start, Value *Stop, Value *Step, bool IsSigned, bool InclusiveStop) {
+    Value *Start, Value *Stop, Value *Step, bool IsSigned, bool InclusiveStop,
+    InsertPointTy ComputeIP, const Twine &Name) {
+
   // Consider the following difficulties (assuming 8-bit signed integers):
   //  * Adding \p Step to the loop counter which passes \p Stop may overflow:
   //      DO I = 1, 100, 50
@@ -947,7 +995,9 @@ CanonicalLoopInfo *OpenMPIRBuilder::createCanonicalLoop(
   assert(IndVarTy == Stop->getType() && "Stop type mismatch");
   assert(IndVarTy == Step->getType() && "Step type mismatch");
 
-  updateToLocation(Loc);
+  LocationDescription ComputeLoc =
+      ComputeIP.isSet() ? LocationDescription(ComputeIP, Loc.DL) : Loc;
+  updateToLocation(ComputeLoc);
 
   ConstantInt *Zero = ConstantInt::get(IndVarTy, 0);
   ConstantInt *One = ConstantInt::get(IndVarTy, 1);
@@ -988,7 +1038,8 @@ CanonicalLoopInfo *OpenMPIRBuilder::createCanonicalLoop(
         InclusiveStop ? CmpInst::ICMP_ULT : CmpInst::ICMP_ULE, Span, Incr);
     CountIfLooping = Builder.CreateSelect(OneCmp, One, CountIfTwo);
   }
-  Value *TripCount = Builder.CreateSelect(ZeroCmp, Zero, CountIfLooping);
+  Value *TripCount = Builder.CreateSelect(ZeroCmp, Zero, CountIfLooping,
+                                          "omp_" + Name + ".tripcount");
 
   auto BodyGen = [=](InsertPointTy CodeGenIP, Value *IV) {
     Builder.restoreIP(CodeGenIP);
@@ -996,7 +1047,8 @@ CanonicalLoopInfo *OpenMPIRBuilder::createCanonicalLoop(
     Value *IndVar = Builder.CreateAdd(Span, Start);
     BodyGenCB(Builder.saveIP(), IndVar);
   };
-  return createCanonicalLoop(Builder.saveIP(), BodyGen, TripCount);
+  LocationDescription LoopLoc = ComputeIP.isSet() ? Loc.IP : Builder.saveIP();
+  return createCanonicalLoop(LoopLoc, BodyGen, TripCount, Name);
 }
 
 // Returns an LLVM function to call for initializing loop bounds using OpenMP
@@ -1104,25 +1156,258 @@ CanonicalLoopInfo *OpenMPIRBuilder::createStaticWorkshareLoop(
 
   // Add the barrier if requested.
   if (NeedsBarrier)
-    createBarrier(Loc, omp::Directive::OMPD_for, /* ForceSimpleCall */ false,
+    createBarrier(LocationDescription(Builder.saveIP(), Loc.DL),
+                  omp::Directive::OMPD_for, /* ForceSimpleCall */ false,
                   /* CheckCancelFlag */ false);
 
   CLI->assertOK();
   return CLI;
 }
 
-void CanonicalLoopInfo::eraseFromParent() {
-  assert(IsValid && "can only erase previously valid loop cfg");
-  IsValid = false;
+/// Make \p Source branch to \p Target.
+///
+/// Handles two situations:
+/// * \p Source already has an unconditional branch.
+/// * \p Source is a degenerate block (no terminator because the BB is
+///             the current head of the IR construction).
+static void redirectTo(BasicBlock *Source, BasicBlock *Target, DebugLoc DL) {
+  if (Instruction *Term = Source->getTerminator()) {
+    auto *Br = cast<BranchInst>(Term);
+    assert(!Br->isConditional() &&
+           "BB's terminator must be an unconditional branch (or degenerate)");
+    BasicBlock *Succ = Br->getSuccessor(0);
+    Succ->removePredecessor(Source, /*KeepOneInputPHIs=*/true);
+    Br->setSuccessor(0, Target);
+    return;
+  }
 
-  SmallVector<BasicBlock *, 5> BBsToRemove{Header, Cond, Latch, Exit};
-  SmallVector<Instruction *, 16> InstsToRemove;
+  auto *NewBr = BranchInst::Create(Target, Source);
+  NewBr->setDebugLoc(DL);
+}
 
-  // Only remove preheader if not re-purposed somewhere else.
-  if (Preheader->getNumUses() == 0)
-    BBsToRemove.push_back(Preheader);
+/// Redirect all edges that branch to \p OldTarget to \p NewTarget. That is,
+/// after this \p OldTarget will be orphaned.
+static void redirectAllPredecessorsTo(BasicBlock *OldTarget,
+                                      BasicBlock *NewTarget, DebugLoc DL) {
+  for (BasicBlock *Pred : make_early_inc_range(predecessors(OldTarget)))
+    redirectTo(Pred, NewTarget, DL);
+}
 
-  DeleteDeadBlocks(BBsToRemove);
+/// Determine which blocks in \p BBs are reachable from outside and remove the
+/// ones that are not reachable from the function.
+static void removeUnusedBlocksFromParent(ArrayRef<BasicBlock *> BBs) {
+  SmallPtrSet<BasicBlock *, 6> BBsToErase{BBs.begin(), BBs.end()};
+  auto HasRemainingUses = [&BBsToErase](BasicBlock *BB) {
+    for (Use &U : BB->uses()) {
+      auto *UseInst = dyn_cast<Instruction>(U.getUser());
+      if (!UseInst)
+        continue;
+      if (BBsToErase.count(UseInst->getParent()))
+        continue;
+      return true;
+    }
+    return false;
+  };
+
+  while (true) {
+    bool Changed = false;
+    for (BasicBlock *BB : make_early_inc_range(BBsToErase)) {
+      if (HasRemainingUses(BB)) {
+        BBsToErase.erase(BB);
+        Changed = true;
+      }
+    }
+    if (!Changed)
+      break;
+  }
+
+  SmallVector<BasicBlock *, 7> BBVec(BBsToErase.begin(), BBsToErase.end());
+  DeleteDeadBlocks(BBVec);
+}
+
+std::vector<CanonicalLoopInfo *>
+OpenMPIRBuilder::tileLoops(DebugLoc DL, ArrayRef<CanonicalLoopInfo *> Loops,
+                           ArrayRef<Value *> TileSizes) {
+  assert(TileSizes.size() == Loops.size() &&
+         "Must pass as many tile sizes as there are loops");
+  int NumLoops = Loops.size();
+  assert(NumLoops >= 1 && "At least one loop to tile required");
+
+  CanonicalLoopInfo *OutermostLoop = Loops.front();
+  CanonicalLoopInfo *InnermostLoop = Loops.back();
+  Function *F = OutermostLoop->getBody()->getParent();
+  BasicBlock *InnerEnter = InnermostLoop->getBody();
+  BasicBlock *InnerLatch = InnermostLoop->getLatch();
+
+  // Collect original trip counts and induction variable to be accessible by
+  // index. Also, the structure of the original loops is not preserved during
+  // the construction of the tiled loops, so do it before we scavenge the BBs of
+  // any original CanonicalLoopInfo.
+  SmallVector<Value *, 4> OrigTripCounts, OrigIndVars;
+  for (CanonicalLoopInfo *L : Loops) {
+    OrigTripCounts.push_back(L->getTripCount());
+    OrigIndVars.push_back(L->getIndVar());
+  }
+
+  // Collect the code between loop headers. These may contain SSA definitions
+  // that are used in the loop nest body. To be usable with in the innermost
+  // body, these BasicBlocks will be sunk into the loop nest body. That is,
+  // these instructions may be executed more often than before the tiling.
+  // TODO: It would be sufficient to only sink them into body of the
+  // corresponding tile loop.
+  SmallVector<std::pair<BasicBlock *, BasicBlock *>, 4> InbetweenCode;
+  for (int i = 0; i < NumLoops - 1; ++i) {
+    CanonicalLoopInfo *Surrounding = Loops[i];
+    CanonicalLoopInfo *Nested = Loops[i + 1];
+
+    BasicBlock *EnterBB = Surrounding->getBody();
+    BasicBlock *ExitBB = Nested->getHeader();
+    InbetweenCode.emplace_back(EnterBB, ExitBB);
+  }
+
+  // Compute the trip counts of the floor loops.
+  Builder.SetCurrentDebugLocation(DL);
+  Builder.restoreIP(OutermostLoop->getPreheaderIP());
+  SmallVector<Value *, 4> FloorCount, FloorRems;
+  for (int i = 0; i < NumLoops; ++i) {
+    Value *TileSize = TileSizes[i];
+    Value *OrigTripCount = OrigTripCounts[i];
+    Type *IVType = OrigTripCount->getType();
+
+    Value *FloorTripCount = Builder.CreateUDiv(OrigTripCount, TileSize);
+    Value *FloorTripRem = Builder.CreateURem(OrigTripCount, TileSize);
+
+    // 0 if tripcount divides the tilesize, 1 otherwise.
+    // 1 means we need an additional iteration for a partial tile.
+    //
+    // Unfortunately we cannot just use the roundup-formula
+    //   (tripcount + tilesize - 1)/tilesize
+    // because the summation might overflow. We do not want introduce undefined
+    // behavior when the untiled loop nest did not.
+    Value *FloorTripOverflow =
+        Builder.CreateICmpNE(FloorTripRem, ConstantInt::get(IVType, 0));
+
+    FloorTripOverflow = Builder.CreateZExt(FloorTripOverflow, IVType);
+    FloorTripCount =
+        Builder.CreateAdd(FloorTripCount, FloorTripOverflow,
+                          "omp_floor" + Twine(i) + ".tripcount", true);
+
+    // Remember some values for later use.
+    FloorCount.push_back(FloorTripCount);
+    FloorRems.push_back(FloorTripRem);
+  }
+
+  // Generate the new loop nest, from the outermost to the innermost.
+  std::vector<CanonicalLoopInfo *> Result;
+  Result.reserve(NumLoops * 2);
+
+  // The basic block of the surrounding loop that enters the nest generated
+  // loop.
+  BasicBlock *Enter = OutermostLoop->getPreheader();
+
+  // The basic block of the surrounding loop where the inner code should
+  // continue.
+  BasicBlock *Continue = OutermostLoop->getAfter();
+
+  // Where the next loop basic block should be inserted.
+  BasicBlock *OutroInsertBefore = InnermostLoop->getExit();
+
+  auto EmbeddNewLoop =
+      [this, DL, F, InnerEnter, &Enter, &Continue, &OutroInsertBefore](
+          Value *TripCount, const Twine &Name) -> CanonicalLoopInfo * {
+    CanonicalLoopInfo *EmbeddedLoop = createLoopSkeleton(
+        DL, TripCount, F, InnerEnter, OutroInsertBefore, Name);
+    redirectTo(Enter, EmbeddedLoop->getPreheader(), DL);
+    redirectTo(EmbeddedLoop->getAfter(), Continue, DL);
+
+    // Setup the position where the next embedded loop connects to this loop.
+    Enter = EmbeddedLoop->getBody();
+    Continue = EmbeddedLoop->getLatch();
+    OutroInsertBefore = EmbeddedLoop->getLatch();
+    return EmbeddedLoop;
+  };
+
+  auto EmbeddNewLoops = [&Result, &EmbeddNewLoop](ArrayRef<Value *> TripCounts,
+                                                  const Twine &NameBase) {
+    for (auto P : enumerate(TripCounts)) {
+      CanonicalLoopInfo *EmbeddedLoop =
+          EmbeddNewLoop(P.value(), NameBase + Twine(P.index()));
+      Result.push_back(EmbeddedLoop);
+    }
+  };
+
+  EmbeddNewLoops(FloorCount, "floor");
+
+  // Within the innermost floor loop, emit the code that computes the tile
+  // sizes.
+  Builder.SetInsertPoint(Enter->getTerminator());
+  SmallVector<Value *, 4> TileCounts;
+  for (int i = 0; i < NumLoops; ++i) {
+    CanonicalLoopInfo *FloorLoop = Result[i];
+    Value *TileSize = TileSizes[i];
+
+    Value *FloorIsEpilogue =
+        Builder.CreateICmpEQ(FloorLoop->getIndVar(), FloorCount[i]);
+    Value *TileTripCount =
+        Builder.CreateSelect(FloorIsEpilogue, FloorRems[i], TileSize);
+
+    TileCounts.push_back(TileTripCount);
+  }
+
+  // Create the tile loops.
+  EmbeddNewLoops(TileCounts, "tile");
+
+  // Insert the inbetween code into the body.
+  BasicBlock *BodyEnter = Enter;
+  BasicBlock *BodyEntered = nullptr;
+  for (std::pair<BasicBlock *, BasicBlock *> P : InbetweenCode) {
+    BasicBlock *EnterBB = P.first;
+    BasicBlock *ExitBB = P.second;
+
+    if (BodyEnter)
+      redirectTo(BodyEnter, EnterBB, DL);
+    else
+      redirectAllPredecessorsTo(BodyEntered, EnterBB, DL);
+
+    BodyEnter = nullptr;
+    BodyEntered = ExitBB;
+  }
+
+  // Append the original loop nest body into the generated loop nest body.
+  if (BodyEnter)
+    redirectTo(BodyEnter, InnerEnter, DL);
+  else
+    redirectAllPredecessorsTo(BodyEntered, InnerEnter, DL);
+  redirectAllPredecessorsTo(InnerLatch, Continue, DL);
+
+  // Replace the original induction variable with an induction variable computed
+  // from the tile and floor induction variables.
+  Builder.restoreIP(Result.back()->getBodyIP());
+  for (int i = 0; i < NumLoops; ++i) {
+    CanonicalLoopInfo *FloorLoop = Result[i];
+    CanonicalLoopInfo *TileLoop = Result[NumLoops + i];
+    Value *OrigIndVar = OrigIndVars[i];
+    Value *Size = TileSizes[i];
+
+    Value *Scale =
+        Builder.CreateMul(Size, FloorLoop->getIndVar(), {}, /*HasNUW=*/true);
+    Value *Shift =
+        Builder.CreateAdd(Scale, TileLoop->getIndVar(), {}, /*HasNUW=*/true);
+    OrigIndVar->replaceAllUsesWith(Shift);
+  }
+
+  // Remove unused parts of the original loops.
+  SmallVector<BasicBlock *, 12> OldControlBBs;
+  OldControlBBs.reserve(6 * Loops.size());
+  for (CanonicalLoopInfo *Loop : Loops)
+    Loop->collectControlBlocks(OldControlBBs);
+  removeUnusedBlocksFromParent(OldControlBBs);
+
+#ifndef NDEBUG
+  for (CanonicalLoopInfo *GenL : Result)
+    GenL->assertOK();
+#endif
+  return Result;
 }
 
 OpenMPIRBuilder::InsertPointTy
@@ -1531,6 +1816,16 @@ void OpenMPIRBuilder::OutlineInfo::collectBlocks(
   }
 }
 
+void CanonicalLoopInfo::collectControlBlocks(
+    SmallVectorImpl<BasicBlock *> &BBs) {
+  // We only count those BBs as control block for which we do not need to
+  // reverse the CFG, i.e. not the loop body which can contain arbitrary control
+  // flow. For consistency, this also means we do not add the Body block, which
+  // is just the entry to the body code.
+  BBs.reserve(BBs.size() + 6);
+  BBs.append({Preheader, Header, Cond, Latch, Exit, After});
+}
+
 void CanonicalLoopInfo::assertOK() const {
 #ifndef NDEBUG
   if (!IsValid)
@@ -1565,11 +1860,16 @@ void CanonicalLoopInfo::assertOK() const {
   assert(Body);
   assert(Body->getSinglePredecessor() == Cond &&
          "Body only reachable from exiting block");
+  assert(!isa<PHINode>(Body->front()));
 
   assert(Latch);
   assert(isa<BranchInst>(Latch->getTerminator()) &&
          "Latch must terminate with unconditional branch");
   assert(Latch->getSingleSuccessor() == Header && "Latch must jump to header");
+  // TODO: To support simple redirecting of the end of the body code that has
+  // multiple; introduce another auxiliary basic block like preheader and after.
+  assert(Latch->getSinglePredecessor() != nullptr);
+  assert(!isa<PHINode>(Latch->front()));
 
   assert(Exit);
   assert(isa<BranchInst>(Exit->getTerminator()) &&
@@ -1580,6 +1880,7 @@ void CanonicalLoopInfo::assertOK() const {
   assert(After);
   assert(After->getSinglePredecessor() == Exit &&
          "After block only reachable from exit block");
+  assert(After->empty() || !isa<PHINode>(After->front()));
 
   Instruction *IndVar = getIndVar();
   assert(IndVar && "Canonical induction variable not found?");
@@ -1587,6 +1888,17 @@ void CanonicalLoopInfo::assertOK() const {
          "Induction variable must be an integer");
   assert(cast<PHINode>(IndVar)->getParent() == Header &&
          "Induction variable must be a PHI in the loop header");
+  assert(cast<PHINode>(IndVar)->getIncomingBlock(0) == Preheader);
+  assert(
+      cast<ConstantInt>(cast<PHINode>(IndVar)->getIncomingValue(0))->isZero());
+  assert(cast<PHINode>(IndVar)->getIncomingBlock(1) == Latch);
+
+  auto *NextIndVar = cast<PHINode>(IndVar)->getIncomingValue(1);
+  assert(cast<Instruction>(NextIndVar)->getParent() == Latch);
+  assert(cast<BinaryOperator>(NextIndVar)->getOpcode() == BinaryOperator::Add);
+  assert(cast<BinaryOperator>(NextIndVar)->getOperand(0) == IndVar);
+  assert(cast<ConstantInt>(cast<BinaryOperator>(NextIndVar)->getOperand(1))
+             ->isOne());
 
   Value *TripCount = getTripCount();
   assert(TripCount && "Loop trip count not found?");

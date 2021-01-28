@@ -397,10 +397,10 @@ std::vector<HighlightingToken> getSemanticHighlightings(ParsedAST &AST) {
   // Add highlightings for macro references.
   for (const auto &SIDToRefs : AST.getMacros().MacroRefs) {
     for (const auto &M : SIDToRefs.second)
-      Builder.addToken({HighlightingKind::Macro, M});
+      Builder.addToken({HighlightingKind::Macro, M.Rng});
   }
   for (const auto &M : AST.getMacros().UnknownMacros)
-    Builder.addToken({HighlightingKind::Macro, M});
+    Builder.addToken({HighlightingKind::Macro, M.Rng});
 
   return std::move(Builder).collect(AST);
 }
@@ -571,7 +571,7 @@ llvm::StringRef toSemanticTokenType(HighlightingKind Kind) {
   case HighlightingKind::Enum:
     return "enum";
   case HighlightingKind::EnumConstant:
-    return "enumConstant"; // nonstandard
+    return "enumMember";
   case HighlightingKind::Typedef:
     return "type";
   case HighlightingKind::DependentType:
@@ -605,7 +605,7 @@ toTheiaSemanticHighlightingInformation(
   std::vector<TheiaSemanticHighlightingInformation> Lines;
   Lines.reserve(Tokens.size());
   for (const auto &Line : Tokens) {
-    llvm::SmallVector<char, 128> LineByteTokens;
+    llvm::SmallVector<char> LineByteTokens;
     llvm::raw_svector_ostream OS(LineByteTokens);
     for (const auto &Token : Line.Tokens) {
       // Writes the token to LineByteTokens in the byte format specified by the

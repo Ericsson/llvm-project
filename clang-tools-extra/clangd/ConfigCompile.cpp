@@ -27,7 +27,9 @@
 #include "Config.h"
 #include "ConfigFragment.h"
 #include "ConfigProvider.h"
+#include "Diagnostics.h"
 #include "Features.inc"
+#include "TidyProvider.h"
 #include "support/Logger.h"
 #include "support/Trace.h"
 #include "llvm/ADT/None.h"
@@ -137,7 +139,7 @@ struct FragmentCompiler {
     llvm::StringRef EnumName;
     const Located<std::string> &Input;
     llvm::Optional<T> Result;
-    llvm::SmallVector<llvm::StringLiteral, 8> ValidValues;
+    llvm::SmallVector<llvm::StringLiteral> ValidValues;
 
   public:
     EnumSwitch(llvm::StringRef EnumName, const Located<std::string> &In,
@@ -186,7 +188,7 @@ struct FragmentCompiler {
     compile(std::move(F.If));
     compile(std::move(F.CompileFlags));
     compile(std::move(F.Index));
-    compile(std::move(F.ClangTidy));
+    compile(std::move(F.Diagnostics));
   }
 
   void compile(Fragment::IfBlock &&F) {
@@ -260,6 +262,36 @@ struct FragmentCompiler {
         });
       });
     }
+
+    if (F.CompilationDatabase) {
+      llvm::Optional<Config::CDBSearchSpec> Spec;
+      if (**F.CompilationDatabase == "Ancestors") {
+        Spec.emplace();
+        Spec->Policy = Config::CDBSearchSpec::Ancestors;
+      } else if (**F.CompilationDatabase == "None") {
+        Spec.emplace();
+        Spec->Policy = Config::CDBSearchSpec::NoCDBSearch;
+      } else {
+        if (auto Path =
+                makeAbsolute(*F.CompilationDatabase, "CompilationDatabase",
+                             llvm::sys::path::Style::native)) {
+          // Drop trailing slash to put the path in canonical form.
+          // Should makeAbsolute do this?
+          llvm::StringRef Rel = llvm::sys::path::relative_path(*Path);
+          if (!Rel.empty() && llvm::sys::path::is_separator(Rel.back()))
+            Path->pop_back();
+
+          Spec.emplace();
+          Spec->Policy = Config::CDBSearchSpec::FixedDir;
+          Spec->FixedCDBPath = std::move(Path);
+        }
+      }
+      if (Spec)
+        Out.Apply.push_back(
+            [Spec(std::move(*Spec))](const Params &, Config &C) {
+              C.CompileFlags.CDBSearch = Spec;
+            });
+    }
   }
 
   void compile(Fragment::IndexBlock &&F) {
@@ -327,6 +359,29 @@ struct FragmentCompiler {
     });
   }
 
+  void compile(Fragment::DiagnosticsBlock &&F) {
+    std::vector<llvm::StringRef> Normalized;
+    for (const auto &Suppressed : F.Suppress) {
+      if (*Suppressed == "*") {
+        Out.Apply.push_back([&](const Params &, Config &C) {
+          C.Diagnostics.SuppressAll = true;
+          C.Diagnostics.Suppress.clear();
+        });
+        return;
+      }
+      Normalized.push_back(normalizeSuppressedCode(*Suppressed));
+    }
+    if (!Normalized.empty())
+      Out.Apply.push_back([Normalized](const Params &, Config &C) {
+        if (C.Diagnostics.SuppressAll)
+          return;
+        for (llvm::StringRef N : Normalized)
+          C.Diagnostics.Suppress.insert(N);
+      });
+
+    compile(std::move(F.ClangTidy));
+  }
+
   void compile(Fragment::StyleBlock &&F) {
     if (!F.FullyQualifiedNamespaces.empty()) {
       std::vector<std::string> FullyQualifiedNamespaces;
@@ -349,11 +404,17 @@ struct FragmentCompiler {
 
   void appendTidyCheckSpec(std::string &CurSpec,
                            const Located<std::string> &Arg, bool IsPositive) {
-    StringRef Str = *Arg;
+    StringRef Str = StringRef(*Arg).trim();
     // Don't support negating here, its handled if the item is in the Add or
     // Remove list.
     if (Str.startswith("-") || Str.contains(',')) {
       diag(Error, "Invalid clang-tidy check name", Arg.Range);
+      return;
+    }
+    if (!Str.contains('*') && !isRegisteredTidyCheck(Str)) {
+      diag(Warning,
+           llvm::formatv("clang-tidy check '{0}' was not found", Str).str(),
+           Arg.Range);
       return;
     }
     CurSpec += ',';
@@ -362,7 +423,7 @@ struct FragmentCompiler {
     CurSpec += Str;
   }
 
-  void compile(Fragment::ClangTidyBlock &&F) {
+  void compile(Fragment::DiagnosticsBlock::ClangTidyBlock &&F) {
     std::string Checks;
     for (auto &CheckGlob : F.Add)
       appendTidyCheckSpec(Checks, CheckGlob, true);
@@ -373,8 +434,9 @@ struct FragmentCompiler {
     if (!Checks.empty())
       Out.Apply.push_back(
           [Checks = std::move(Checks)](const Params &, Config &C) {
-            C.ClangTidy.Checks.append(
-                Checks, C.ClangTidy.Checks.empty() ? /*skip comma*/ 1 : 0,
+            C.Diagnostics.ClangTidy.Checks.append(
+                Checks,
+                C.Diagnostics.ClangTidy.Checks.empty() ? /*skip comma*/ 1 : 0,
                 std::string::npos);
           });
     if (!F.CheckOptions.empty()) {
@@ -385,8 +447,8 @@ struct FragmentCompiler {
       Out.Apply.push_back(
           [CheckOptions = std::move(CheckOptions)](const Params &, Config &C) {
             for (auto &StringPair : CheckOptions)
-              C.ClangTidy.CheckOptions.insert_or_assign(StringPair.first,
-                                                        StringPair.second);
+              C.Diagnostics.ClangTidy.CheckOptions.insert_or_assign(
+                  StringPair.first, StringPair.second);
           });
     }
   }

@@ -11,6 +11,7 @@
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "llvm/ADT/FunctionExtras.h"
 
 namespace mlir {
 
@@ -190,7 +191,8 @@ protected:
 /// OpRewritePattern is a wrapper around RewritePattern that allows for
 /// matching and rewriting against an instance of a derived operation class as
 /// opposed to a raw Operation.
-template <typename SourceOp> struct OpRewritePattern : public RewritePattern {
+template <typename SourceOp>
+struct OpRewritePattern : public RewritePattern {
   /// Patterns must specify the root operation name they match against, and can
   /// also specify the benefit of the pattern matching.
   OpRewritePattern(MLIRContext *context, PatternBenefit benefit = 1)
@@ -445,6 +447,30 @@ public:
   void cloneRegionBefore(Region &region, Region &parent,
                          Region::iterator before);
   void cloneRegionBefore(Region &region, Block *before);
+
+  /// This method replaces the uses of the results of `op` with the values in
+  /// `newValues` when the provided `functor` returns true for a specific use.
+  /// The number of values in `newValues` is required to match the number of
+  /// results of `op`. `allUsesReplaced`, if non-null, is set to true if all of
+  /// the uses of `op` were replaced. Note that in some pattern rewriters, the
+  /// given 'functor' may be stored beyond the lifetime of the pattern being
+  /// applied. As such, the function should not capture by reference and instead
+  /// use value capture as necessary.
+  virtual void
+  replaceOpWithIf(Operation *op, ValueRange newValues, bool *allUsesReplaced,
+                  llvm::unique_function<bool(OpOperand &) const> functor);
+  void replaceOpWithIf(Operation *op, ValueRange newValues,
+                       llvm::unique_function<bool(OpOperand &) const> functor) {
+    replaceOpWithIf(op, newValues, /*allUsesReplaced=*/nullptr,
+                    std::move(functor));
+  }
+
+  /// This method replaces the uses of the results of `op` with the values in
+  /// `newValues` when a use is nested within the given `block`. The number of
+  /// values in `newValues` is required to match the number of results of `op`.
+  /// If all uses of this operation are replaced, the operation is erased.
+  void replaceOpWithinBlock(Operation *op, ValueRange newValues, Block *block,
+                            bool *allUsesReplaced = nullptr);
 
   /// This method performs the final replacement for a pattern, where the
   /// results of the operation are updated to use the specified list of SSA

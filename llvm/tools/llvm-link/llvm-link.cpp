@@ -144,9 +144,7 @@ static std::unique_ptr<Module> loadFile(const char *argv0,
 
 static std::unique_ptr<Module> loadArFile(const char *Argv0,
                                           std::unique_ptr<MemoryBuffer> Buffer,
-                                          LLVMContext &Context, Linker &L,
-                                          unsigned OrigFlags,
-                                          unsigned ApplicableFlags) {
+                                          LLVMContext &Context) {
   std::unique_ptr<Module> Result(new Module("ArchiveModule", Context));
   StringRef ArchiveName = Buffer->getBufferIdentifier();
   if (Verbose)
@@ -155,6 +153,7 @@ static std::unique_ptr<Module> loadArFile(const char *Argv0,
   Error Err = Error::success();
   object::Archive Archive(*Buffer, Err);
   ExitOnErr(std::move(Err));
+  Linker L(*Result);
   for (const object::Archive::Child &C : Archive.children(Err)) {
     Expected<StringRef> Ename = C.getName();
     if (Error E = Ename.takeError()) {
@@ -163,7 +162,7 @@ static std::unique_ptr<Module> loadArFile(const char *Argv0,
           << " failed to read name of archive member"
           << ArchiveName << "'\n";
       return nullptr;
-    };
+    }
     std::string ChildName = Ename.get().str();
     if (Verbose)
       errs() << "Parsing member '" << ChildName
@@ -188,7 +187,12 @@ static std::unique_ptr<Module> loadArFile(const char *Argv0,
       return nullptr;
     }
 
-    std::unique_ptr<Module> M = parseIR(MemBuf.get(), ParseErr, Context);
+    std::unique_ptr<Module> M;
+    if (DisableLazyLoad)
+      M = parseIR(MemBuf.get(), ParseErr, Context);
+    else
+      M = getLazyIRModule(MemoryBuffer::getMemBuffer(MemBuf.get(), false),
+                          ParseErr, Context);
 
     if (!M.get()) {
       errs() << Argv0 << ": ";
@@ -199,9 +203,8 @@ static std::unique_ptr<Module> loadArFile(const char *Argv0,
     }
     if (Verbose)
       errs() << "Linking member '" << ChildName << "' of archive library.\n";
-    if (L.linkModules(*Result, std::move(M), ApplicableFlags))
+    if (L.linkInModule(std::move(M)))
       return nullptr;
-    ApplicableFlags = OrigFlags;
   } // end for each child
   ExitOnErr(std::move(Err));
   return Result;
@@ -356,8 +359,7 @@ static bool linkFiles(const char *argv0, LLVMContext &Context, Linker &L,
 
     std::unique_ptr<Module> M =
         identify_magic(Buffer->getBuffer()) == file_magic::archive
-            ? loadArFile(argv0, std::move(Buffer), Context, L, Flags,
-                         ApplicableFlags)
+            ? loadArFile(argv0, std::move(Buffer), Context)
             : loadFile(argv0, std::move(Buffer), Context);
     if (!M.get()) {
       errs() << argv0 << ": ";
@@ -460,7 +462,8 @@ int main(int argc, char **argv) {
     errs() << "Here's the assembly:\n" << *Composite;
 
   std::error_code EC;
-  ToolOutputFile Out(OutputFilename, EC, sys::fs::OF_None);
+  ToolOutputFile Out(OutputFilename, EC,
+                     OutputAssembly ? sys::fs::OF_Text : sys::fs::OF_None);
   if (EC) {
     WithColor::error() << EC.message() << '\n';
     return 1;

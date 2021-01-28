@@ -283,6 +283,19 @@ void WasmWriter::writeSectionContent(raw_ostream &OS,
 
     SubSection.done();
   }
+  if (Section.DataSegmentNames.size()) {
+    writeUint8(OS, wasm::WASM_NAMES_DATA_SEGMENT);
+
+    SubSectionWriter SubSection(OS);
+
+    encodeULEB128(Section.DataSegmentNames.size(), SubSection.getStream());
+    for (const WasmYAML::NameEntry &NameEntry : Section.DataSegmentNames) {
+      encodeULEB128(NameEntry.Index, SubSection.getStream());
+      writeStringRef(NameEntry.Name, SubSection.getStream());
+    }
+
+    SubSection.done();
+  }
 }
 
 void WasmWriter::writeSectionContent(raw_ostream &OS,
@@ -513,9 +526,9 @@ void WasmWriter::writeSectionContent(raw_ostream &OS,
   encodeULEB128(Section.Segments.size(), OS);
   for (auto &Segment : Section.Segments) {
     encodeULEB128(Segment.InitFlags, OS);
-    if (Segment.InitFlags & wasm::WASM_SEGMENT_HAS_MEMINDEX)
+    if (Segment.InitFlags & wasm::WASM_DATA_SEGMENT_HAS_MEMINDEX)
       encodeULEB128(Segment.MemoryIndex, OS);
-    if ((Segment.InitFlags & wasm::WASM_SEGMENT_IS_PASSIVE) == 0)
+    if ((Segment.InitFlags & wasm::WASM_DATA_SEGMENT_IS_PASSIVE) == 0)
       writeInitExpr(OS, Segment.Offset);
     encodeULEB128(Segment.Content.binary_size(), OS);
     Segment.Content.writeAsBinary(OS);

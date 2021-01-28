@@ -1442,7 +1442,8 @@ public:
   /// Increment the profiler's counter for the given statement by \p StepV.
   /// If \p StepV is null, the default increment is 1.
   void incrementProfileCounter(const Stmt *S, llvm::Value *StepV = nullptr) {
-    if (CGM.getCodeGenOpts().hasProfileClangInstr())
+    if (CGM.getCodeGenOpts().hasProfileClangInstr() &&
+        !CurFn->hasFnAttribute(llvm::Attribute::NoProfile))
       PGO.emitCounterIncrement(Builder, S, StepV);
     PGO.setCurrentStmt(S);
   }
@@ -1856,7 +1857,7 @@ private:
 
   llvm::BasicBlock *TerminateLandingPad = nullptr;
   llvm::BasicBlock *TerminateHandler = nullptr;
-  llvm::BasicBlock *TrapBB = nullptr;
+  llvm::SmallVector<llvm::BasicBlock *, 2> TrapBBs;
 
   /// Terminate funclets keyed by parent funclet pad.
   llvm::MapVector<llvm::Value *, llvm::BasicBlock *> TerminateFunclets;
@@ -4394,6 +4395,21 @@ public:
   bool ConstantFoldsToSimpleInteger(const Expr *Cond, llvm::APSInt &Result,
                                     bool AllowLabels = false);
 
+  /// isInstrumentedCondition - Determine whether the given condition is an
+  /// instrumentable condition (i.e. no "&&" or "||").
+  static bool isInstrumentedCondition(const Expr *C);
+
+  /// EmitBranchToCounterBlock - Emit a conditional branch to a new block that
+  /// increments a profile counter based on the semantics of the given logical
+  /// operator opcode.  This is used to instrument branch condition coverage
+  /// for logical operators.
+  void EmitBranchToCounterBlock(const Expr *Cond, BinaryOperator::Opcode LOp,
+                                llvm::BasicBlock *TrueBlock,
+                                llvm::BasicBlock *FalseBlock,
+                                uint64_t TrueCount = 0,
+                                Stmt::Likelihood LH = Stmt::LH_None,
+                                const Expr *CntrIdx = nullptr);
+
   /// EmitBranchOnBoolExpr - Emit a branch on a boolean condition (e.g. for an
   /// if statement) to the specified blocks.  Based on the condition, this might
   /// try to simplify the codegen of the conditional based on the branch.
@@ -4465,7 +4481,7 @@ public:
 
   /// Create a basic block that will call the trap intrinsic, and emit a
   /// conditional branch to it, for the -ftrapv checks.
-  void EmitTrapCheck(llvm::Value *Checked);
+  void EmitTrapCheck(llvm::Value *Checked, SanitizerHandler CheckHandlerID);
 
   /// Emit a call to trap or debugtrap and attach function attribute
   /// "trap-func-name" if specified.
@@ -4560,26 +4576,6 @@ private:
                                        Address Loc);
 
 public:
-#ifndef NDEBUG
-  // Determine whether the given argument is an Objective-C method
-  // that may have type parameters in its signature.
-  static bool isObjCMethodWithTypeParams(const ObjCMethodDecl *method) {
-    const DeclContext *dc = method->getDeclContext();
-    if (const ObjCInterfaceDecl *classDecl= dyn_cast<ObjCInterfaceDecl>(dc)) {
-      return classDecl->getTypeParamListAsWritten();
-    }
-
-    if (const ObjCCategoryDecl *catDecl = dyn_cast<ObjCCategoryDecl>(dc)) {
-      return catDecl->getTypeParamList();
-    }
-
-    return false;
-  }
-
-  template<typename T>
-  static bool isObjCMethodWithTypeParams(const T *) { return false; }
-#endif
-
   enum class EvaluationOrder {
     ///! No language constraints on evaluation order.
     Default,
@@ -4589,56 +4585,16 @@ public:
     ForceRightToLeft
   };
 
-  /// EmitCallArgs - Emit call arguments for a function.
-  template <typename T>
-  void EmitCallArgs(CallArgList &Args, const T *CallArgTypeInfo,
-                    llvm::iterator_range<CallExpr::const_arg_iterator> ArgRange,
-                    AbstractCallee AC = AbstractCallee(),
-                    unsigned ParamsToSkip = 0,
-                    EvaluationOrder Order = EvaluationOrder::Default) {
-    SmallVector<QualType, 16> ArgTypes;
-    CallExpr::const_arg_iterator Arg = ArgRange.begin();
+  // Wrapper for function prototype sources. Wraps either a FunctionProtoType or
+  // an ObjCMethodDecl.
+  struct PrototypeWrapper {
+    llvm::PointerUnion<const FunctionProtoType *, const ObjCMethodDecl *> P;
 
-    assert((ParamsToSkip == 0 || CallArgTypeInfo) &&
-           "Can't skip parameters if type info is not provided");
-    if (CallArgTypeInfo) {
-#ifndef NDEBUG
-      bool isGenericMethod = isObjCMethodWithTypeParams(CallArgTypeInfo);
-#endif
+    PrototypeWrapper(const FunctionProtoType *FT) : P(FT) {}
+    PrototypeWrapper(const ObjCMethodDecl *MD) : P(MD) {}
+  };
 
-      // First, use the argument types that the type info knows about
-      for (auto I = CallArgTypeInfo->param_type_begin() + ParamsToSkip,
-                E = CallArgTypeInfo->param_type_end();
-           I != E; ++I, ++Arg) {
-        assert(Arg != ArgRange.end() && "Running over edge of argument list!");
-        assert((isGenericMethod ||
-                ((*I)->isVariablyModifiedType() ||
-                 (*I).getNonReferenceType()->isObjCRetainableType() ||
-                 getContext()
-                         .getCanonicalType((*I).getNonReferenceType())
-                         .getTypePtr() ==
-                     getContext()
-                         .getCanonicalType((*Arg)->getType())
-                         .getTypePtr())) &&
-               "type mismatch in call argument!");
-        ArgTypes.push_back(*I);
-      }
-    }
-
-    // Either we've emitted all the call args, or we have a call to variadic
-    // function.
-    assert((Arg == ArgRange.end() || !CallArgTypeInfo ||
-            CallArgTypeInfo->isVariadic()) &&
-           "Extra arguments in non-variadic function!");
-
-    // If we still have any arguments, emit them using the type of the argument.
-    for (auto *A : llvm::make_range(Arg, ArgRange.end()))
-      ArgTypes.push_back(CallArgTypeInfo ? getVarArgType(A) : A->getType());
-
-    EmitCallArgs(Args, ArgTypes, ArgRange, AC, ParamsToSkip, Order);
-  }
-
-  void EmitCallArgs(CallArgList &Args, ArrayRef<QualType> ArgTypes,
+  void EmitCallArgs(CallArgList &Args, PrototypeWrapper Prototype,
                     llvm::iterator_range<CallExpr::const_arg_iterator> ArgRange,
                     AbstractCallee AC = AbstractCallee(),
                     unsigned ParamsToSkip = 0,

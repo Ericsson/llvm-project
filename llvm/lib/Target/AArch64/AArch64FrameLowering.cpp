@@ -249,7 +249,7 @@ static unsigned estimateRSStackSizeLimit(MachineFunction &MF) {
 
 TargetStackID::Value
 AArch64FrameLowering::getStackIDForScalableVectors() const {
-  return TargetStackID::SVEVector;
+  return TargetStackID::ScalableVector;
 }
 
 /// Returns the size of the fixed object area (allocated next to sp on entry)
@@ -296,6 +296,7 @@ bool AArch64FrameLowering::canUseRedZone(const MachineFunction &MF) const {
 /// pointer register.
 bool AArch64FrameLowering::hasFP(const MachineFunction &MF) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
+  const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
   const TargetRegisterInfo *RegInfo = MF.getSubtarget().getRegisterInfo();
   // Win64 EH requires a frame pointer if funclets are present, as the locals
   // are accessed off the frame pointer in both the parent function and the
@@ -319,6 +320,14 @@ bool AArch64FrameLowering::hasFP(const MachineFunction &MF) const {
   // DefaultSafeSPDisplacement is fine as we only emergency spill GP regs.
   if (!MFI.isMaxCallFrameSizeComputed() ||
       MFI.getMaxCallFrameSize() > DefaultSafeSPDisplacement)
+    return true;
+  // If there are both SVE and non-SVE objects on the stack, make the frame
+  // pointer available since it may be more performant to use it.
+  uint64_t CalleeStackSize = AFI->isCalleeSavedStackSizeComputed()
+                                 ? AFI->getCalleeSavedStackSize()
+                                 : 0;
+  uint64_t NonSVEStackSize = MFI.getStackSize() - CalleeStackSize;
+  if (AFI->getStackSizeSVE() && NonSVEStackSize)
     return true;
 
   return false;
@@ -496,7 +505,7 @@ void AArch64FrameLowering::emitCalleeSavedFrameMoves(
       continue;
 
     StackOffset Offset;
-    if (MFI.getStackID(Info.getFrameIdx()) == TargetStackID::SVEVector) {
+    if (MFI.getStackID(Info.getFrameIdx()) == TargetStackID::ScalableVector) {
       AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
       Offset =
           StackOffset::getScalable(MFI.getObjectOffset(Info.getFrameIdx())) -
@@ -1511,7 +1520,7 @@ static void InsertReturnAddressAuth(MachineFunction &MF,
   // this instruction can safely used for any v8a architecture.
   // From v8.3a onwards there are optimised authenticate LR and return
   // instructions, namely RETA{A,B}, that can be used instead.
-  if (Subtarget.hasV8_3aOps() && MBBI != MBB.end() &&
+  if (Subtarget.hasPAuth() && MBBI != MBB.end() &&
       MBBI->getOpcode() == AArch64::RET_ReallyLR) {
     BuildMI(MBB, MBBI, DL,
             TII->get(MFI.shouldSignWithBKey() ? AArch64::RETAB : AArch64::RETAA))
@@ -1856,7 +1865,7 @@ StackOffset AArch64FrameLowering::resolveFrameIndexReference(
   const auto &MFI = MF.getFrameInfo();
   int64_t ObjectOffset = MFI.getObjectOffset(FI);
   bool isFixed = MFI.isFixedObjectIndex(FI);
-  bool isSVE = MFI.getStackID(FI) == TargetStackID::SVEVector;
+  bool isSVE = MFI.getStackID(FI) == TargetStackID::ScalableVector;
   return resolveFrameOffsetReference(MF, ObjectOffset, isFixed, isSVE, FrameReg,
                                      PreferFP, ForSimm);
 }
@@ -1883,10 +1892,6 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
   // right thing for the emergency spill slot.
   bool UseFP = false;
   if (AFI->hasStackFrame() && !isSVE) {
-    // We shouldn't prefer using the FP when there is an SVE area
-    // in between the FP and the non-SVE locals/spills.
-    PreferFP &= !SVEStackSize;
-
     // Note: Keeping the following as multiple 'if' statements rather than
     // merging to a single expression for readability.
     //
@@ -1906,6 +1911,10 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
       // via the FP and the SP, use whichever is closest.
       bool FPOffsetFits = !ForSimm || FPOffset >= -256;
       PreferFP |= Offset > -FPOffset;
+
+      // The FP offset will not fit if there is an SVE area in the way.
+      if (SVEStackSize && FPOffset < 0)
+        FPOffsetFits = false;
 
       if (MFI.hasVarSizedObjects()) {
         // If we have variable sized objects, we can use either FP or BP, as the
@@ -2412,7 +2421,7 @@ bool AArch64FrameLowering::spillCalleeSavedRegisters(
     // Update the StackIDs of the SVE stack slots.
     MachineFrameInfo &MFI = MF.getFrameInfo();
     if (RPI.Type == RegPairInfo::ZPR || RPI.Type == RegPairInfo::PPR)
-      MFI.setStackID(RPI.FrameIdx, TargetStackID::SVEVector);
+      MFI.setStackID(RPI.FrameIdx, TargetStackID::ScalableVector);
 
   }
   return true;
@@ -2761,7 +2770,7 @@ static int64_t determineSVEStackObjectOffsets(MachineFrameInfo &MFI,
 #ifndef NDEBUG
   // First process all fixed stack objects.
   for (int I = MFI.getObjectIndexBegin(); I != 0; ++I)
-    assert(MFI.getStackID(I) != TargetStackID::SVEVector &&
+    assert(MFI.getStackID(I) != TargetStackID::ScalableVector &&
            "SVE vectors should never be passed on the stack by value, only by "
            "reference.");
 #endif
@@ -2791,7 +2800,7 @@ static int64_t determineSVEStackObjectOffsets(MachineFrameInfo &MFI,
   SmallVector<int, 8> ObjectsToAllocate;
   for (int I = 0, E = MFI.getObjectIndexEnd(); I != E; ++I) {
     unsigned StackID = MFI.getStackID(I);
-    if (StackID != TargetStackID::SVEVector)
+    if (StackID != TargetStackID::ScalableVector)
       continue;
     if (MaxCSFrameIndex >= I && I >= MinCSFrameIndex)
       continue;

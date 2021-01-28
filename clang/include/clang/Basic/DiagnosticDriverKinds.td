@@ -79,15 +79,13 @@ def err_drv_cuda_host_arch : Error<"unsupported architecture '%0' for host compi
 def err_drv_mix_cuda_hip : Error<"Mixed Cuda and HIP compilation is not supported.">;
 def err_drv_bad_target_id : Error<"Invalid target ID: %0 (A target ID is a processor name "
   "followed by an optional list of predefined features post-fixed by a plus or minus sign deliminated "
-  "by colon, e.g. 'gfx908:sram-ecc+:xnack-')">;
+  "by colon, e.g. 'gfx908:sramecc+:xnack-')">;
 def err_drv_bad_offload_arch_combo : Error<"Invalid offload arch combinations: %0 and %1 (For a specific "
   "processor, a feature should either exist in all offload archs, or not exist in any offload archs)">;
 def err_drv_invalid_thread_model_for_target : Error<
   "invalid thread model '%0' in '%1' for this target">;
 def err_drv_invalid_linker_name : Error<
   "invalid linker name in argument '%0'">;
-def err_drv_invalid_pgo_instrumentor : Error<
-  "invalid PGO instrumentor in argument '%0'">;
 def err_drv_invalid_rtlib_name : Error<
   "invalid runtime library name in argument '%0'">;
 def err_drv_unsupported_rtlib_for_platform : Error<
@@ -265,11 +263,11 @@ def err_drv_omp_host_target_not_supported : Error<
   "The target '%0' is not a supported OpenMP host target.">;
 def err_drv_expecting_fopenmp_with_fopenmp_targets : Error<
   "The option -fopenmp-targets must be used in conjunction with a -fopenmp option compatible with offloading, please use -fopenmp=libomp or -fopenmp=libiomp5.">;
+def err_drv_omp_offload_target_missingbcruntime : Error<
+  "No library '%0' found in the default clang lib directory or in LIBRARY_PATH. Please use --libomptarget-nvptx-bc-path to specify nvptx bitcode library.">;
+def err_drv_omp_offload_target_bcruntime_not_found : Error<"Bitcode library '%0' does not exist.">;
 def warn_drv_omp_offload_target_duplicate : Warning<
   "The OpenMP offloading target '%0' is similar to target '%1' already specified - will be ignored.">,
-  InGroup<OpenMPTarget>;
-def warn_drv_omp_offload_target_missingbcruntime : Warning<
-  "No library '%0' found in the default clang lib directory or in LIBRARY_PATH. Expect degraded performance due to no inlining of runtime functions on target devices.">,
   InGroup<OpenMPTarget>;
 def err_drv_unsupported_embed_bitcode
     : Error<"%0 is not supported with -fembed-bitcode">;
@@ -291,6 +289,9 @@ def warn_drv_unsupported_opt_for_target : Warning<
   InGroup<IgnoredOptimizationArgument>;
 def warn_drv_unsupported_debug_info_opt_for_target : Warning<
   "debug information option '%0' is not supported for target '%1'">,
+  InGroup<UnsupportedTargetOpt>;
+def warn_drv_dwarf_version_limited_by_target : Warning<
+  "debug information option '%0' is not supported. It needs DWARF-%2 but target '%1' only provides DWARF-%3.">,
   InGroup<UnsupportedTargetOpt>;
 def warn_c_kext : Warning<
   "ignoring -fapple-kext which is valid for C++ and Objective-C++ only">;
@@ -347,6 +348,8 @@ def err_invalid_branch_protection: Error <
   "invalid branch protection option '%0' in '%1'">;
 def err_invalid_sls_hardening : Error<
   "invalid sls hardening option '%0' in '%1'">;
+def err_sls_hardening_arm_not_supported : Error<
+  "-mharden-sls is only supported on armv7-a or later">;
 
 def note_drv_command_failed_diag_msg : Note<
   "diagnostic msg: %0">;
@@ -531,11 +534,6 @@ def err_drv_cannot_mix_options : Error<"cannot specify '%1' along with '%0'">;
 
 def err_drv_invalid_object_mode : Error<"OBJECT_MODE setting %0 is not recognized and is not a valid setting.">;
 
-def err_drv_invalid_sve_vector_bits : Error<
-  "'-msve-vector-bits' is not supported without SVE enabled">;
-
 def err_aix_default_altivec_abi : Error<
   "The default Altivec ABI on AIX is not yet supported, use '-mabi=vec-extabi' for the extended Altivec ABI">;
-
-def err_aix_altivec : Error<"'-mabi=vec-extabi' and '-mabi=vec-default' require '-maltivec'">;
 }

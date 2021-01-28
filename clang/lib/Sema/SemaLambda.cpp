@@ -386,11 +386,8 @@ CXXMethodDecl *Sema::startLambdaDefinition(CXXRecordDecl *Class,
   //   trailing-return-type respectively.
   DeclarationName MethodName
     = Context.DeclarationNames.getCXXOperatorName(OO_Call);
-  DeclarationNameLoc MethodNameLoc;
-  MethodNameLoc.CXXOperatorName.BeginOpNameLoc
-    = IntroducerRange.getBegin().getRawEncoding();
-  MethodNameLoc.CXXOperatorName.EndOpNameLoc
-    = IntroducerRange.getEnd().getRawEncoding();
+  DeclarationNameLoc MethodNameLoc =
+      DeclarationNameLoc::makeCXXOperatorNameLoc(IntroducerRange);
   CXXMethodDecl *Method = CXXMethodDecl::Create(
       Context, Class, EndLoc,
       DeclarationNameInfo(MethodName, IntroducerRange.getBegin(),
@@ -998,6 +995,10 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
   if (getLangOpts().CUDA)
     CUDASetLambdaAttrs(Method);
 
+  // OpenMP lambdas might get assumumption attributes.
+  if (LangOpts.OpenMP)
+    ActOnFinishedFunctionDefinitionInOpenMPAssumeScope(Method);
+
   // Number the lambda for linkage purposes if necessary.
   handleLambdaNumbering(Class, Method);
 
@@ -1374,7 +1375,6 @@ static void addFunctionPointerConversion(Sema &S, SourceRange IntroducerRange,
   DeclarationName ConversionName
     = S.Context.DeclarationNames.getCXXConversionFunctionName(
         S.Context.getCanonicalType(PtrToFunctionTy));
-  DeclarationNameLoc ConvNameLoc;
   // Construct a TypeSourceInfo for the conversion function, and wire
   // all the parameters appropriately for the FunctionProtoTypeLoc
   // so that everything works during transformation/instantiation of
@@ -1393,7 +1393,8 @@ static void addFunctionPointerConversion(Sema &S, SourceRange IntroducerRange,
   // operators ParmVarDecls below.
   TypeSourceInfo *ConvNamePtrToFunctionTSI =
       S.Context.getTrivialTypeSourceInfo(PtrToFunctionTy, Loc);
-  ConvNameLoc.NamedType.TInfo = ConvNamePtrToFunctionTSI;
+  DeclarationNameLoc ConvNameLoc =
+      DeclarationNameLoc::makeNamedTypeLoc(ConvNamePtrToFunctionTSI);
 
   // The conversion function is a conversion to a pointer-to-function.
   TypeSourceInfo *ConvTSI = S.Context.getTrivialTypeSourceInfo(ConvTy, Loc);
@@ -1544,8 +1545,8 @@ static void addBlockPointerConversion(Sema &S,
   DeclarationName Name
     = S.Context.DeclarationNames.getCXXConversionFunctionName(
         S.Context.getCanonicalType(BlockPtrTy));
-  DeclarationNameLoc NameLoc;
-  NameLoc.NamedType.TInfo = S.Context.getTrivialTypeSourceInfo(BlockPtrTy, Loc);
+  DeclarationNameLoc NameLoc = DeclarationNameLoc::makeNamedTypeLoc(
+      S.Context.getTrivialTypeSourceInfo(BlockPtrTy, Loc));
   CXXConversionDecl *Conversion = CXXConversionDecl::Create(
       S.Context, Class, Loc, DeclarationNameInfo(Name, Loc, NameLoc), ConvTy,
       S.Context.getTrivialTypeSourceInfo(ConvTy, Loc),

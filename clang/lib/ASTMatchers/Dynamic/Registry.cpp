@@ -31,8 +31,6 @@
 #include <utility>
 #include <vector>
 
-using namespace clang::ast_type_traits;
-
 namespace clang {
 namespace ast_matchers {
 namespace dynamic {
@@ -145,6 +143,7 @@ RegistryMaps::RegistryMaps() {
   REGISTER_MATCHER(autoreleasePoolStmt)
   REGISTER_MATCHER(binaryConditionalOperator);
   REGISTER_MATCHER(binaryOperator);
+  REGISTER_MATCHER(binaryOperation);
   REGISTER_MATCHER(blockDecl);
   REGISTER_MATCHER(blockExpr);
   REGISTER_MATCHER(blockPointerType);
@@ -193,6 +192,7 @@ RegistryMaps::RegistryMaps() {
   REGISTER_MATCHER(cxxOperatorCallExpr);
   REGISTER_MATCHER(cxxRecordDecl);
   REGISTER_MATCHER(cxxReinterpretCastExpr);
+  REGISTER_MATCHER(cxxRewrittenBinaryOperator);
   REGISTER_MATCHER(cxxStaticCastExpr);
   REGISTER_MATCHER(cxxStdInitializerListExpr);
   REGISTER_MATCHER(cxxTemporaryObjectExpr);
@@ -241,6 +241,7 @@ RegistryMaps::RegistryMaps() {
   REGISTER_MATCHER(functionProtoType);
   REGISTER_MATCHER(functionTemplateDecl);
   REGISTER_MATCHER(functionType);
+  REGISTER_MATCHER(genericSelectionExpr);
   REGISTER_MATCHER(gnuNullExpr);
   REGISTER_MATCHER(gotoStmt);
   REGISTER_MATCHER(has);

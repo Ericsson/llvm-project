@@ -25,7 +25,7 @@
 namespace clang {
 namespace format {
 
-static const char *const Blanks = " \t\v\f\r";
+static constexpr StringRef Blanks = " \t\v\f\r";
 static bool IsBlank(char C) {
   switch (C) {
   case ' ':
@@ -41,25 +41,27 @@ static bool IsBlank(char C) {
 
 static StringRef getLineCommentIndentPrefix(StringRef Comment,
                                             const FormatStyle &Style) {
-  static const char *const KnownCStylePrefixes[] = {"///<", "//!<", "///", "//",
-                                                    "//!"};
-  static const char *const KnownTextProtoPrefixes[] = {"//", "#", "##", "###",
-                                                       "####"};
-  ArrayRef<const char *> KnownPrefixes(KnownCStylePrefixes);
+  static constexpr StringRef KnownCStylePrefixes[] = {"///<", "//!<", "///",
+                                                      "//!",  "//:",  "//"};
+  static constexpr StringRef KnownTextProtoPrefixes[] = {"####", "###", "##",
+                                                         "//", "#"};
+  ArrayRef<StringRef> KnownPrefixes(KnownCStylePrefixes);
   if (Style.Language == FormatStyle::LK_TextProto)
     KnownPrefixes = KnownTextProtoPrefixes;
 
-  StringRef LongestPrefix;
+  assert(std::is_sorted(KnownPrefixes.begin(), KnownPrefixes.end(),
+                        [](StringRef Lhs, StringRef Rhs) noexcept {
+                          return Lhs.size() > Rhs.size();
+                        }));
+
   for (StringRef KnownPrefix : KnownPrefixes) {
     if (Comment.startswith(KnownPrefix)) {
-      size_t PrefixLength = KnownPrefix.size();
-      while (PrefixLength < Comment.size() && Comment[PrefixLength] == ' ')
-        ++PrefixLength;
-      if (PrefixLength > LongestPrefix.size())
-        LongestPrefix = Comment.substr(0, PrefixLength);
+      const auto PrefixLength =
+          Comment.find_first_not_of(' ', KnownPrefix.size());
+      return Comment.substr(0, PrefixLength);
     }
   }
-  return LongestPrefix;
+  return {};
 }
 
 static BreakableToken::Split
@@ -749,8 +751,7 @@ bool BreakableBlockComment::mayReflow(
 }
 
 BreakableLineCommentSection::BreakableLineCommentSection(
-    const FormatToken &Token, unsigned StartColumn,
-    unsigned OriginalStartColumn, bool FirstInLine, bool InPPDirective,
+    const FormatToken &Token, unsigned StartColumn, bool InPPDirective,
     encoding::Encoding Encoding, const FormatStyle &Style)
     : BreakableComment(Token, StartColumn, InPPDirective, Encoding, Style) {
   assert(Tok.is(TT_LineComment) &&
@@ -773,10 +774,7 @@ BreakableLineCommentSection::BreakableLineCommentSection(
     OriginalPrefix.resize(Lines.size());
     for (size_t i = FirstLineIndex, e = Lines.size(); i < e; ++i) {
       Lines[i] = Lines[i].ltrim(Blanks);
-      // We need to trim the blanks in case this is not the first line in a
-      // multiline comment. Then the indent is included in Lines[i].
-      StringRef IndentPrefix =
-          getLineCommentIndentPrefix(Lines[i].ltrim(Blanks), Style);
+      StringRef IndentPrefix = getLineCommentIndentPrefix(Lines[i], Style);
       assert((TokenText.startswith("//") || TokenText.startswith("#")) &&
              "unsupported line comment prefix, '//' and '#' are supported");
       OriginalPrefix[i] = Prefix[i] = IndentPrefix;
@@ -792,9 +790,14 @@ BreakableLineCommentSection::BreakableLineCommentSection(
           Prefix[i] = "///< ";
         else if (Prefix[i] == "//!<")
           Prefix[i] = "//!< ";
-        else if (Prefix[i] == "#" &&
-                 Style.Language == FormatStyle::LK_TextProto)
+        else if (Prefix[i] == "#")
           Prefix[i] = "# ";
+        else if (Prefix[i] == "##")
+          Prefix[i] = "## ";
+        else if (Prefix[i] == "###")
+          Prefix[i] = "### ";
+        else if (Prefix[i] == "####")
+          Prefix[i] = "#### ";
       }
 
       Tokens[i] = LineTok;

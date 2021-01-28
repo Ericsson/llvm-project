@@ -77,6 +77,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/SampleContextTracker.h"
+#include "llvm/Transforms/IPO/SampleProfileProbe.h"
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Utils/CallPromotionUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -103,6 +104,9 @@ STATISTIC(NumCSInlined,
           "Number of functions inlined with context sensitive profile");
 STATISTIC(NumCSNotInlined,
           "Number of functions not inlined with context sensitive profile");
+STATISTIC(NumMismatchedProfile,
+          "Number of functions with CFG mismatched profile");
+STATISTIC(NumMatchedProfile, "Number of functions with CFG matched profile");
 
 // Command line option to specify the file to read samples from. This is
 // mainly used for debugging.
@@ -317,15 +321,14 @@ private:
 class SampleProfileLoader {
 public:
   SampleProfileLoader(
-      StringRef Name, StringRef RemapName, bool IsThinLTOPreLink,
+      StringRef Name, StringRef RemapName, ThinOrFullLTOPhase LTOPhase,
       std::function<AssumptionCache &(Function &)> GetAssumptionCache,
       std::function<TargetTransformInfo &(Function &)> GetTargetTransformInfo,
       std::function<const TargetLibraryInfo &(Function &)> GetTLI)
       : GetAC(std::move(GetAssumptionCache)),
         GetTTI(std::move(GetTargetTransformInfo)), GetTLI(std::move(GetTLI)),
         CoverageTracker(*this), Filename(std::string(Name)),
-        RemappingFilename(std::string(RemapName)),
-        IsThinLTOPreLink(IsThinLTOPreLink) {}
+        RemappingFilename(std::string(RemapName)), LTOPhase(LTOPhase) {}
 
   bool doInitialization(Module &M, FunctionAnalysisManager *FAM = nullptr);
   bool runOnModule(Module &M, ModuleAnalysisManager *AM,
@@ -340,6 +343,7 @@ protected:
   unsigned getFunctionLoc(Function &F);
   bool emitAnnotations(Function &F);
   ErrorOr<uint64_t> getInstWeight(const Instruction &I);
+  ErrorOr<uint64_t> getProbeWeight(const Instruction &I);
   ErrorOr<uint64_t> getBlockWeight(const BasicBlock *BB);
   const FunctionSamples *findCalleeFunctionSamples(const CallBase &I) const;
   std::vector<const FunctionSamples *>
@@ -443,11 +447,12 @@ protected:
   /// Flag indicating whether input profile is context-sensitive
   bool ProfileIsCS = false;
 
-  /// Flag indicating if the pass is invoked in ThinLTO compile phase.
+  /// Flag indicating which LTO/ThinLTO phase the pass is invoked in.
   ///
-  /// In this phase, in annotation, we should not promote indirect calls.
-  /// Instead, we will mark GUIDs that needs to be annotated to the function.
-  bool IsThinLTOPreLink;
+  /// We need to know the LTO phase because for example in ThinLTOPrelink
+  /// phase, in annotation, we should not promote indirect calls. Instead,
+  /// we will mark GUIDs that needs to be annotated to the function.
+  ThinOrFullLTOPhase LTOPhase;
 
   /// Profile Summary Info computed from sample profile.
   ProfileSummaryInfo *PSI = nullptr;
@@ -490,6 +495,9 @@ protected:
 
   // External inline advisor used to replay inline decision from remarks.
   std::unique_ptr<ReplayInlineAdvisor> ExternalInlineAdvisor;
+
+  // A pseudo probe helper to correlate the imported sample counts.
+  std::unique_ptr<PseudoProbeManager> ProbeManager;
 };
 
 class SampleProfileLoaderLegacyPass : public ModulePass {
@@ -497,10 +505,11 @@ public:
   // Class identification, replacement for typeinfo
   static char ID;
 
-  SampleProfileLoaderLegacyPass(StringRef Name = SampleProfileFile,
-                                bool IsThinLTOPreLink = false)
+  SampleProfileLoaderLegacyPass(
+      StringRef Name = SampleProfileFile,
+      ThinOrFullLTOPhase LTOPhase = ThinOrFullLTOPhase::None)
       : ModulePass(ID), SampleLoader(
-                            Name, SampleProfileRemappingFile, IsThinLTOPreLink,
+                            Name, SampleProfileRemappingFile, LTOPhase,
                             [&](Function &F) -> AssumptionCache & {
                               return ACT->getAssumptionCache(F);
                             },
@@ -722,6 +731,9 @@ void SampleProfileLoader::printBlockWeight(raw_ostream &OS,
 ///
 /// \returns the weight of \p Inst.
 ErrorOr<uint64_t> SampleProfileLoader::getInstWeight(const Instruction &Inst) {
+  if (FunctionSamples::ProfileIsProbeBased)
+    return getProbeWeight(Inst);
+
   const DebugLoc &DLoc = Inst.getDebugLoc();
   if (!DLoc)
     return std::error_code();
@@ -771,6 +783,47 @@ ErrorOr<uint64_t> SampleProfileLoader::getInstWeight(const Instruction &Inst) {
                       << " (line offset: " << LineOffset << "."
                       << DIL->getBaseDiscriminator() << " - weight: " << R.get()
                       << ")\n");
+  }
+  return R;
+}
+
+ErrorOr<uint64_t> SampleProfileLoader::getProbeWeight(const Instruction &Inst) {
+  assert(FunctionSamples::ProfileIsProbeBased &&
+         "Profile is not pseudo probe based");
+  Optional<PseudoProbe> Probe = extractProbe(Inst);
+  if (!Probe)
+    return std::error_code();
+
+  const FunctionSamples *FS = findFunctionSamples(Inst);
+  if (!FS)
+    return std::error_code();
+
+  // If a direct call/invoke instruction is inlined in profile
+  // (findCalleeFunctionSamples returns non-empty result), but not inlined here,
+  // it means that the inlined callsite has no sample, thus the call
+  // instruction should have 0 count.
+  if (const auto *CB = dyn_cast<CallBase>(&Inst))
+    if (!CB->isIndirectCall() && findCalleeFunctionSamples(*CB))
+      return 0;
+
+  const ErrorOr<uint64_t> &R = FS->findSamplesAt(Probe->Id, 0);
+  if (R) {
+    uint64_t Samples = R.get();
+    bool FirstMark = CoverageTracker.markSamplesUsed(FS, Probe->Id, 0, Samples);
+    if (FirstMark) {
+      ORE->emit([&]() {
+        OptimizationRemarkAnalysis Remark(DEBUG_TYPE, "AppliedSamples", &Inst);
+        Remark << "Applied " << ore::NV("NumSamples", Samples);
+        Remark << " samples from profile (ProbeId=";
+        Remark << ore::NV("ProbeId", Probe->Id);
+        Remark << ")";
+        return Remark;
+      });
+    }
+
+    LLVM_DEBUG(dbgs() << "    " << Probe->Id << ":" << Inst
+                      << " - weight: " << R.get() << ")\n");
+    return Samples;
   }
   return R;
 }
@@ -848,8 +901,7 @@ SampleProfileLoader::findCalleeFunctionSamples(const CallBase &Inst) const {
   if (FS == nullptr)
     return nullptr;
 
-  return FS->findFunctionSamplesAt(LineLocation(FunctionSamples::getOffset(DIL),
-                                                DIL->getBaseDiscriminator()),
+  return FS->findFunctionSamplesAt(FunctionSamples::getCallSiteIdentifier(DIL),
                                    CalleeName, Reader->getRemapper());
 }
 
@@ -870,16 +922,13 @@ SampleProfileLoader::findIndirectCallFunctionSamples(
   if (FS == nullptr)
     return R;
 
-  uint32_t LineOffset = FunctionSamples::getOffset(DIL);
-  uint32_t Discriminator = DIL->getBaseDiscriminator();
-
-  auto T = FS->findCallTargetMapAt(LineOffset, Discriminator);
+  auto CallSite = FunctionSamples::getCallSiteIdentifier(DIL);
+  auto T = FS->findCallTargetMapAt(CallSite);
   Sum = 0;
   if (T)
     for (const auto &T_C : T.get())
       Sum += T_C.second;
-  if (const FunctionSamplesMap *M = FS->findFunctionSamplesMapAt(LineLocation(
-          FunctionSamples::getOffset(DIL), DIL->getBaseDiscriminator()))) {
+  if (const FunctionSamplesMap *M = FS->findFunctionSamplesMapAt(CallSite)) {
     if (M->empty())
       return R;
     for (const auto &NameFS : *M) {
@@ -907,6 +956,12 @@ SampleProfileLoader::findIndirectCallFunctionSamples(
 /// \returns the FunctionSamples pointer to the inlined instance.
 const FunctionSamples *
 SampleProfileLoader::findFunctionSamples(const Instruction &Inst) const {
+  if (FunctionSamples::ProfileIsProbeBased) {
+    Optional<PseudoProbe> Probe = extractProbe(Inst);
+    if (!Probe)
+      return nullptr;
+  }
+
   const DILocation *DIL = Inst.getDebugLoc();
   if (!DIL)
     return Samples;
@@ -1066,7 +1121,7 @@ bool SampleProfileLoader::inlineHotFunctions(
           continue;
         uint64_t Sum;
         for (const auto *FS : findIndirectCallFunctionSamples(*I, Sum)) {
-          if (IsThinLTOPreLink) {
+          if (LTOPhase == ThinOrFullLTOPhase::ThinLTOPreLink) {
             FS->findInlinedFunctions(InlinedGUIDs, F.getParent(),
                                      PSI->getOrCompHotCountThreshold());
             continue;
@@ -1119,7 +1174,7 @@ bool SampleProfileLoader::inlineHotFunctions(
           LocalChanged = true;
           ++NumCSInlined;
         }
-      } else if (IsThinLTOPreLink) {
+      } else if (LTOPhase == ThinOrFullLTOPhase::ThinLTOPreLink) {
         findCalleeFunctionSamples(*I)->findInlinedFunctions(
             InlinedGUIDs, F.getParent(), PSI->getOrCompHotCountThreshold());
       }
@@ -1592,13 +1647,11 @@ void SampleProfileLoader::propagateWeights(Function &F) {
           if (!DLoc)
             continue;
           const DILocation *DIL = DLoc;
-          uint32_t LineOffset = FunctionSamples::getOffset(DIL);
-          uint32_t Discriminator = DIL->getBaseDiscriminator();
-
           const FunctionSamples *FS = findFunctionSamples(I);
           if (!FS)
             continue;
-          auto T = FS->findCallTargetMapAt(LineOffset, Discriminator);
+          auto CallSite = FunctionSamples::getCallSiteIdentifier(DIL);
+          auto T = FS->findCallTargetMapAt(CallSite);
           if (!T || T.get().empty())
             continue;
           SmallVector<InstrProfValueData, 2> SortedCallTargets =
@@ -1762,11 +1815,22 @@ void SampleProfileLoader::computeDominanceAndLoopInfo(Function &F) {
 bool SampleProfileLoader::emitAnnotations(Function &F) {
   bool Changed = false;
 
-  if (getFunctionLoc(F) == 0)
-    return false;
+  if (FunctionSamples::ProfileIsProbeBased) {
+    if (!ProbeManager->profileIsValid(F, *Samples)) {
+      LLVM_DEBUG(
+          dbgs() << "Profile is invalid due to CFG mismatch for Function "
+                 << F.getName());
+      ++NumMismatchedProfile;
+      return false;
+    }
+    ++NumMatchedProfile;
+  } else {
+    if (getFunctionLoc(F) == 0)
+      return false;
 
-  LLVM_DEBUG(dbgs() << "Line number for the first instruction in "
-                    << F.getName() << ": " << getFunctionLoc(F) << "\n");
+    LLVM_DEBUG(dbgs() << "Line number for the first instruction in "
+                      << F.getName() << ": " << getFunctionLoc(F) << "\n");
+  }
 
   DenseSet<GlobalValue::GUID> InlinedGUIDs;
   Changed |= inlineHotFunctions(F, InlinedGUIDs);
@@ -1882,8 +1946,14 @@ bool SampleProfileLoader::doInitialization(Module &M,
     return false;
   }
   Reader = std::move(ReaderOrErr.get());
+  Reader->setSkipFlatProf(LTOPhase == ThinOrFullLTOPhase::ThinLTOPostLink);
   Reader->collectFuncsFrom(M);
-  ProfileIsValid = (Reader->read() == sampleprof_error::success);
+  if (std::error_code EC = Reader->read()) {
+    std::string Msg = "profile reading failed: " + EC.message();
+    Ctx.diagnose(DiagnosticInfoSampleProfile(Filename, Msg));
+    return false;
+  }
+
   PSL = Reader->getProfileSymbolList();
 
   // While profile-sample-accurate is on, ignore symbol list.
@@ -1897,7 +1967,8 @@ bool SampleProfileLoader::doInitialization(Module &M,
 
   if (FAM && !ProfileInlineReplayFile.empty()) {
     ExternalInlineAdvisor = std::make_unique<ReplayInlineAdvisor>(
-        *FAM, Ctx, ProfileInlineReplayFile);
+        M, *FAM, Ctx, /*OriginalAdvisor=*/nullptr, ProfileInlineReplayFile,
+        /*EmitRemarks=*/false);
     if (!ExternalInlineAdvisor->areReplayRemarksLoaded())
       ExternalInlineAdvisor.reset();
   }
@@ -1910,6 +1981,17 @@ bool SampleProfileLoader::doInitialization(Module &M,
     // Tracker for profiles under different context
     ContextTracker =
         std::make_unique<SampleContextTracker>(Reader->getProfiles());
+  }
+
+  // Load pseudo probe descriptors for probe-based function samples.
+  if (Reader->profileIsProbeBased()) {
+    ProbeManager = std::make_unique<PseudoProbeManager>(M);
+    if (!ProbeManager->moduleIsProbed(M)) {
+      const char *Msg =
+          "Pseudo-probe-based profile requires SampleProfileProbePass";
+      Ctx.diagnose(DiagnosticInfoSampleProfile(Filename, Msg));
+      return false;
+    }
   }
 
   return true;
@@ -1925,8 +2007,6 @@ ModulePass *llvm::createSampleProfileLoaderPass(StringRef Name) {
 
 bool SampleProfileLoader::runOnModule(Module &M, ModuleAnalysisManager *AM,
                                       ProfileSummaryInfo *_PSI, CallGraph *CG) {
-  if (!ProfileIsValid)
-    return false;
   GUIDToFuncNameMapper Mapper(M, *Reader, GUIDToFuncNameMap);
 
   PSI = _PSI;
@@ -2036,7 +2116,10 @@ bool SampleProfileLoader::runOnFunction(Function &F, ModuleAnalysisManager *AM) 
       initialEntryCount = -1;
   }
 
-  F.setEntryCount(ProfileCount(initialEntryCount, Function::PCT_Real));
+  // Initialize entry count when the function has no existing entry
+  // count value.
+  if (!F.getEntryCount().hasValue())
+    F.setEntryCount(ProfileCount(initialEntryCount, Function::PCT_Real));
   std::unique_ptr<OptimizationRemarkEmitter> OwnedORE;
   if (AM) {
     auto &FAM =
@@ -2077,7 +2160,7 @@ PreservedAnalyses SampleProfileLoaderPass::run(Module &M,
       ProfileFileName.empty() ? SampleProfileFile : ProfileFileName,
       ProfileRemappingFileName.empty() ? SampleProfileRemappingFile
                                        : ProfileRemappingFileName,
-      IsThinLTOPreLink, GetAssumptionCache, GetTTI, GetTLI);
+      LTOPhase, GetAssumptionCache, GetTTI, GetTLI);
 
   if (!SampleLoader.doInitialization(M, &FAM))
     return PreservedAnalyses::all();

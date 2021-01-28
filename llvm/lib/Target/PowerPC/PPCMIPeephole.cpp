@@ -302,7 +302,7 @@ static bool collectUnprimedAccPHIs(MachineRegisterInfo *MRI,
       // code.
       if (Opcode != PPC::PHI)
         continue;
-      if (std::find(PHIs.begin(), PHIs.end(), Instr) != PHIs.end())
+      if (llvm::is_contained(PHIs, Instr))
         return false;
       PHIs.push_back(Instr);
     }
@@ -712,7 +712,7 @@ bool PPCMIPeephole::simplifyCode(void) {
               Simplified = true;
               Register ConvReg1 = RoundInstr->getOperand(1).getReg();
               Register FRSPDefines = RoundInstr->getOperand(0).getReg();
-              MachineInstr &Use = *(MRI->use_instr_begin(FRSPDefines));
+              MachineInstr &Use = *(MRI->use_instr_nodbg_begin(FRSPDefines));
               for (int i = 0, e = Use.getNumOperands(); i < e; ++i)
                 if (Use.getOperand(i).isReg() &&
                     Use.getOperand(i).getReg() == FRSPDefines)
@@ -987,7 +987,7 @@ bool PPCMIPeephole::simplifyCode(void) {
       case PPC::RLWINM_rec:
       case PPC::RLWINM8:
       case PPC::RLWINM8_rec: {
-        Simplified = TII->simplifyRotateAndMaskInstr(MI, ToErase);
+        Simplified = TII->combineRLWINM(MI, &ToErase);
         if (Simplified)
           ++NumRotatesCollapsed;
         break;

@@ -19,14 +19,20 @@ class StandardOpsDialect;
 template <typename ConcreteDialect>
 void registerDialect(DialectRegistry &registry);
 
+namespace complex {
+class ComplexDialect;
+} // end namespace complex
+
 namespace gpu {
 class GPUDialect;
 class GPUModuleOp;
 } // end namespace gpu
 
 namespace LLVM {
-class LLVMDialect;
+class LLVMArmNeonDialect;
+class LLVMArmSVEDialect;
 class LLVMAVX512Dialect;
+class LLVMDialect;
 } // end namespace LLVM
 
 namespace NVVM {

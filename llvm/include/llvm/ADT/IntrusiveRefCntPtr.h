@@ -58,6 +58,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstddef>
+#include <memory>
 
 namespace llvm {
 
@@ -176,6 +177,11 @@ public:
   }
 
   template <class X>
+  IntrusiveRefCntPtr(std::unique_ptr<X> S) : Obj(S.release()) {
+    retain();
+  }
+
+  template <class X>
   IntrusiveRefCntPtr(const IntrusiveRefCntPtr<X> &S) : Obj(S.get()) {
     retain();
   }
@@ -290,6 +296,12 @@ template <class T> struct simplify_type<const IntrusiveRefCntPtr<T>> {
     return Val.get();
   }
 };
+
+/// Factory function for creating intrusive ref counted pointers.
+template <typename T, typename... Args>
+IntrusiveRefCntPtr<T> makeIntrusiveRefCnt(Args &&...A) {
+  return IntrusiveRefCntPtr<T>(new T(std::forward<Args>(A)...));
+}
 
 } // end namespace llvm
 

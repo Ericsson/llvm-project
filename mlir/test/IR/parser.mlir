@@ -58,8 +58,8 @@ func private @baz() -> (i1, index, f32)
 // CHECK: func private @missingReturn()
 func private @missingReturn()
 
-// CHECK: func private @int_types(i1, i2, i4, i7, i87) -> (i1, index, i19)
-func private @int_types(i1, i2, i4, i7, i87) -> (i1, index, i19)
+// CHECK: func private @int_types(i0, i1, i2, i4, i7, i87) -> (i1, index, i19)
+func private @int_types(i0, i1, i2, i4, i7, i87) -> (i1, index, i19)
 
 // CHECK: func private @sint_types(si2, si4) -> (si7, si1023)
 func private @sint_types(si2, si4) -> (si7, si1023)
@@ -67,6 +67,8 @@ func private @sint_types(si2, si4) -> (si7, si1023)
 // CHECK: func private @uint_types(ui2, ui4) -> (ui7, ui1023)
 func private @uint_types(ui2, ui4) -> (ui7, ui1023)
 
+// CHECK: func private @float_types(f80, f128)
+func private @float_types(f80, f128)
 
 // CHECK: func private @vectors(vector<1xf32>, vector<2x4xf32>)
 func private @vectors(vector<1 x f32>, vector<2x4xf32>)
@@ -1174,10 +1176,17 @@ func private @ptr_to_function() -> !unreg.ptr<() -> ()>
 // CHECK-LABEL: func private @escaped_string_char(i1 {foo.value = "\0A"})
 func private @escaped_string_char(i1 {foo.value = "\n"})
 
-// CHECK-LABEL: func @wrapped_keyword_test
-func @wrapped_keyword_test() {
-  // CHECK: test.wrapped_keyword foo.keyword
-  test.wrapped_keyword foo.keyword
+// CHECK-LABEL: func @parse_integer_literal_test
+func @parse_integer_literal_test() {
+  // CHECK: test.parse_integer_literal : 5
+  test.parse_integer_literal : 5
+  return
+}
+
+// CHECK-LABEL: func @parse_wrapped_keyword_test
+func @parse_wrapped_keyword_test() {
+  // CHECK: test.parse_wrapped_keyword foo.keyword
+  test.parse_wrapped_keyword foo.keyword
   return
 }
 

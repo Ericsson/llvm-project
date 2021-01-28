@@ -495,8 +495,6 @@ lldb::ProcessSP PlatformRemoteGDBServer::DebugProcess(
           error.Clear();
 
         if (target && error.Success()) {
-          debugger.GetTargetList().SetSelectedTarget(target);
-
           // The darwin always currently uses the GDB remote debugger plug-in
           // so even when debugging locally we are debugging remotely!
           process_sp = target->CreateProcess(launch_info.GetListener(),
@@ -581,8 +579,6 @@ lldb::ProcessSP PlatformRemoteGDBServer::Attach(
           error.Clear();
 
         if (target && error.Success()) {
-          debugger.GetTargetList().SetSelectedTarget(target);
-
           // The darwin always currently uses the GDB remote debugger plug-in
           // so even when debugging locally we are debugging remotely!
           process_sp =
@@ -829,7 +825,7 @@ std::string PlatformRemoteGDBServer::MakeUrl(const char *scheme,
                                              const char *hostname,
                                              uint16_t port, const char *path) {
   StreamString result;
-  result.Printf("%s://%s", scheme, hostname);
+  result.Printf("%s://[%s]", scheme, hostname);
   if (port != 0)
     result.Printf(":%u", port);
   if (path)

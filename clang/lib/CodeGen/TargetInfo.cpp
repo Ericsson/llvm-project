@@ -1089,11 +1089,6 @@ struct CCState {
   unsigned FreeSSERegs = 0;
 };
 
-enum {
-  // Vectorcall only allows the first 6 parameters to be passed in registers.
-  VectorcallMaxParamNumAsReg = 6
-};
-
 /// X86_32ABIInfo - The X86-32 ABI information.
 class X86_32ABIInfo : public SwiftABIInfo {
   enum Class {
@@ -2097,6 +2092,23 @@ bool X86_32TargetCodeGenInfo::isStructReturnInRegABI(
   }
 }
 
+static void addX86InterruptAttrs(const FunctionDecl *FD, llvm::GlobalValue *GV,
+                                 CodeGen::CodeGenModule &CGM) {
+  if (!FD->hasAttr<AnyX86InterruptAttr>())
+    return;
+
+  llvm::Function *Fn = cast<llvm::Function>(GV);
+  Fn->setCallingConv(llvm::CallingConv::X86_INTR);
+  if (FD->getNumParams() == 0)
+    return;
+
+  auto PtrTy = cast<PointerType>(FD->getParamDecl(0)->getType());
+  llvm::Type *ByValTy = CGM.getTypes().ConvertType(PtrTy->getPointeeType());
+  llvm::Attribute NewAttr = llvm::Attribute::getWithByValType(
+    Fn->getContext(), ByValTy);
+  Fn->addParamAttr(0, NewAttr);
+}
+
 void X86_32TargetCodeGenInfo::setTargetAttributes(
     const Decl *D, llvm::GlobalValue *GV, CodeGen::CodeGenModule &CGM) const {
   if (GV->isDeclaration())
@@ -2106,10 +2118,8 @@ void X86_32TargetCodeGenInfo::setTargetAttributes(
       llvm::Function *Fn = cast<llvm::Function>(GV);
       Fn->addFnAttr("stackrealign");
     }
-    if (FD->hasAttr<AnyX86InterruptAttr>()) {
-      llvm::Function *Fn = cast<llvm::Function>(GV);
-      Fn->setCallingConv(llvm::CallingConv::X86_INTR);
-    }
+
+    addX86InterruptAttrs(FD, GV, CGM);
   }
 }
 
@@ -2390,10 +2400,8 @@ public:
 private:
   ABIArgInfo classify(QualType Ty, unsigned &FreeSSERegs, bool IsReturnType,
                       bool IsVectorCall, bool IsRegCall) const;
-  ABIArgInfo reclassifyHvaArgType(QualType Ty, unsigned &FreeSSERegs,
-                                      const ABIArgInfo &current) const;
-  void computeVectorCallArgs(CGFunctionInfo &FI, unsigned FreeSSERegs,
-                             bool IsVectorCall, bool IsRegCall) const;
+  ABIArgInfo reclassifyHvaArgForVectorCall(QualType Ty, unsigned &FreeSSERegs,
+                                           const ABIArgInfo &current) const;
 
   X86AVXABILevel AVXLevel;
 
@@ -2476,10 +2484,8 @@ public:
         llvm::Function *Fn = cast<llvm::Function>(GV);
         Fn->addFnAttr("stackrealign");
       }
-      if (FD->hasAttr<AnyX86InterruptAttr>()) {
-        llvm::Function *Fn = cast<llvm::Function>(GV);
-        Fn->setCallingConv(llvm::CallingConv::X86_INTR);
-      }
+
+      addX86InterruptAttrs(FD, GV, CGM);
     }
   }
 
@@ -2590,7 +2596,7 @@ static std::string qualifyWindowsLibrary(llvm::StringRef Lib) {
   // If the argument does not end in .lib, automatically add the suffix.
   // If the argument contains a space, enclose it in quotes.
   // This matches the behavior of MSVC.
-  bool Quote = (Lib.find(" ") != StringRef::npos);
+  bool Quote = (Lib.find(' ') != StringRef::npos);
   std::string ArgStr = Quote ? "\"" : "";
   ArgStr += Lib;
   if (!Lib.endswith_lower(".lib") && !Lib.endswith_lower(".a"))
@@ -2689,10 +2695,8 @@ void WinX86_64TargetCodeGenInfo::setTargetAttributes(
       llvm::Function *Fn = cast<llvm::Function>(GV);
       Fn->addFnAttr("stackrealign");
     }
-    if (FD->hasAttr<AnyX86InterruptAttr>()) {
-      llvm::Function *Fn = cast<llvm::Function>(GV);
-      Fn->setCallingConv(llvm::CallingConv::X86_INTR);
-    }
+
+    addX86InterruptAttrs(FD, GV, CGM);
   }
 
   addStackProbeTargetAttributes(D, GV, CGM);
@@ -4152,10 +4156,8 @@ Address X86_64ABIInfo::EmitMSVAArg(CodeGenFunction &CGF, Address VAListAddr,
                           /*allowHigherAlign*/ false);
 }
 
-ABIArgInfo
-WinX86_64ABIInfo::reclassifyHvaArgType(QualType Ty, unsigned &FreeSSERegs,
-                                    const ABIArgInfo &current) const {
-  // Assumes vectorCall calling convention.
+ABIArgInfo WinX86_64ABIInfo::reclassifyHvaArgForVectorCall(
+    QualType Ty, unsigned &FreeSSERegs, const ABIArgInfo &current) const {
   const Type *Base = nullptr;
   uint64_t NumElts = 0;
 
@@ -4288,31 +4290,6 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
   return ABIArgInfo::getDirect();
 }
 
-void WinX86_64ABIInfo::computeVectorCallArgs(CGFunctionInfo &FI,
-                                             unsigned FreeSSERegs,
-                                             bool IsVectorCall,
-                                             bool IsRegCall) const {
-  unsigned Count = 0;
-  for (auto &I : FI.arguments()) {
-    // Vectorcall in x64 only permits the first 6 arguments to be passed
-    // as XMM/YMM registers.
-    if (Count < VectorcallMaxParamNumAsReg)
-      I.info = classify(I.type, FreeSSERegs, false, IsVectorCall, IsRegCall);
-    else {
-      // Since these cannot be passed in registers, pretend no registers
-      // are left.
-      unsigned ZeroSSERegsAvail = 0;
-      I.info = classify(I.type, /*FreeSSERegs=*/ZeroSSERegsAvail, false,
-                        IsVectorCall, IsRegCall);
-    }
-    ++Count;
-  }
-
-  for (auto &I : FI.arguments()) {
-    I.info = reclassifyHvaArgType(I.type, FreeSSERegs, I.info);
-  }
-}
-
 void WinX86_64ABIInfo::computeInfo(CGFunctionInfo &FI) const {
   const unsigned CC = FI.getCallingConvention();
   bool IsVectorCall = CC == llvm::CallingConv::X86_VectorCall;
@@ -4347,13 +4324,25 @@ void WinX86_64ABIInfo::computeInfo(CGFunctionInfo &FI) const {
     FreeSSERegs = 16;
   }
 
-  if (IsVectorCall) {
-    computeVectorCallArgs(FI, FreeSSERegs, IsVectorCall, IsRegCall);
-  } else {
-    for (auto &I : FI.arguments())
-      I.info = classify(I.type, FreeSSERegs, false, IsVectorCall, IsRegCall);
+  unsigned ArgNum = 0;
+  unsigned ZeroSSERegs = 0;
+  for (auto &I : FI.arguments()) {
+    // Vectorcall in x64 only permits the first 6 arguments to be passed as
+    // XMM/YMM registers. After the sixth argument, pretend no vector
+    // registers are left.
+    unsigned *MaybeFreeSSERegs =
+        (IsVectorCall && ArgNum >= 6) ? &ZeroSSERegs : &FreeSSERegs;
+    I.info =
+        classify(I.type, *MaybeFreeSSERegs, false, IsVectorCall, IsRegCall);
+    ++ArgNum;
   }
 
+  if (IsVectorCall) {
+    // For vectorcall, assign aggregate HVAs to any free vector registers in a
+    // second pass.
+    for (auto &I : FI.arguments())
+      I.info = reclassifyHvaArgForVectorCall(I.type, FreeSSERegs, I.info);
+  }
 }
 
 Address WinX86_64ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
@@ -4720,13 +4709,12 @@ Address PPC32_SVR4_ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAList,
   // };
 
   bool isI64 = Ty->isIntegerType() && getContext().getTypeSize(Ty) == 64;
-  bool isInt =
-      Ty->isIntegerType() || Ty->isPointerType() || Ty->isAggregateType();
+  bool isInt = !Ty->isFloatingType();
   bool isF64 = Ty->isFloatingType() && getContext().getTypeSize(Ty) == 64;
 
   // All aggregates are passed indirectly?  That doesn't seem consistent
   // with the argument-lowering code.
-  bool isIndirect = Ty->isAggregateType();
+  bool isIndirect = isAggregateTypeForABI(Ty);
 
   CGBuilderTy &Builder = CGF.Builder;
 
@@ -4847,7 +4835,7 @@ Address PPC32_SVR4_ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAList,
 
 bool PPC32TargetCodeGenInfo::isStructReturnInRegABI(
     const llvm::Triple &Triple, const CodeGenOptions &Opts) {
-  assert(Triple.getArch() == llvm::Triple::ppc);
+  assert(Triple.isPPC32());
 
   switch (Opts.getStructReturnConvention()) {
   case CodeGenOptions::SRCK_Default:
@@ -5076,8 +5064,12 @@ bool ABIInfo::isHomogeneousAggregate(QualType Ty, const Type *&Base,
 
     Members = 0;
 
-    // If this is a C++ record, check the bases first.
+    // If this is a C++ record, check the properties of the record such as
+    // bases and ABI specific restrictions
     if (const CXXRecordDecl *CXXRD = dyn_cast<CXXRecordDecl>(RD)) {
+      if (!getCXXABI().isPermittedToBeHomogeneousAggregate(CXXRD))
+        return false;
+
       for (const auto &I : CXXRD->bases()) {
         // Ignore empty records.
         if (isEmptyRecord(getContext(), I.getType(), true))
@@ -9936,14 +9928,27 @@ void XCoreTargetCodeGenInfo::emitTargetMetadata(
 //===----------------------------------------------------------------------===//
 
 namespace {
+class SPIRABIInfo : public DefaultABIInfo {
+public:
+  SPIRABIInfo(CodeGenTypes &CGT) : DefaultABIInfo(CGT) { setCCs(); }
+
+private:
+  void setCCs();
+};
+} // end anonymous namespace
+namespace {
 class SPIRTargetCodeGenInfo : public TargetCodeGenInfo {
 public:
   SPIRTargetCodeGenInfo(CodeGen::CodeGenTypes &CGT)
-      : TargetCodeGenInfo(std::make_unique<DefaultABIInfo>(CGT)) {}
+      : TargetCodeGenInfo(std::make_unique<SPIRABIInfo>(CGT)) {}
   unsigned getOpenCLKernelCallingConv() const override;
 };
 
 } // End anonymous namespace.
+void SPIRABIInfo::setCCs() {
+  assert(getRuntimeCC() == llvm::CallingConv::C);
+  RuntimeCC = llvm::CallingConv::SPIR_FUNC;
+}
 
 namespace clang {
 namespace CodeGen {
@@ -10425,7 +10430,6 @@ bool RISCVABIInfo::detectFPCCEligibleStructHelper(QualType Ty, CharUnits CurOff,
       return false;
     Field1Ty = CGT.ConvertType(EltTy);
     Field1Off = CurOff;
-    assert(CurOff.isZero() && "Unexpected offset for first field");
     Field2Ty = Field1Ty;
     Field2Off = Field1Off + getContext().getTypeSizeInChars(EltTy);
     return true;
@@ -10520,7 +10524,7 @@ bool RISCVABIInfo::detectFPCCEligibleStruct(QualType Ty, llvm::Type *&Field1Ty,
     NeededArgFPRs++;
   else if (Field2Ty)
     NeededArgGPRs++;
-  return IsCandidate;
+  return true;
 }
 
 // Call getCoerceAndExpand for the two-element flattened struct described by
@@ -10546,15 +10550,15 @@ ABIArgInfo RISCVABIInfo::coerceAndExpandFPCCEligibleStruct(
 
   CharUnits Field2Align =
       CharUnits::fromQuantity(getDataLayout().getABITypeAlignment(Field2Ty));
-  CharUnits Field1Size =
+  CharUnits Field1End = Field1Off +
       CharUnits::fromQuantity(getDataLayout().getTypeStoreSize(Field1Ty));
-  CharUnits Field2OffNoPadNoPack = Field1Size.alignTo(Field2Align);
+  CharUnits Field2OffNoPadNoPack = Field1End.alignTo(Field2Align);
 
   CharUnits Padding = CharUnits::Zero();
   if (Field2Off > Field2OffNoPadNoPack)
     Padding = Field2Off - Field2OffNoPadNoPack;
-  else if (Field2Off != Field2Align && Field2Off > Field1Size)
-    Padding = Field2Off - Field1Size;
+  else if (Field2Off != Field2Align && Field2Off > Field1End)
+    Padding = Field2Off - Field1End;
 
   bool IsPacked = !Field2Off.isMultipleOf(Field2Align);
 
@@ -10911,6 +10915,13 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
     return SetCGInfo(
         new PPC32TargetCodeGenInfo(Types, IsSoftFloat, RetSmallStructInRegABI));
   }
+  case llvm::Triple::ppcle: {
+    bool IsSoftFloat = CodeGenOpts.FloatABI == "soft";
+    bool RetSmallStructInRegABI =
+        PPC32TargetCodeGenInfo::isStructReturnInRegABI(Triple, CodeGenOpts);
+    return SetCGInfo(
+        new PPC32TargetCodeGenInfo(Types, IsSoftFloat, RetSmallStructInRegABI));
+  }
   case llvm::Triple::ppc64:
     if (Triple.isOSAIX())
       return SetCGInfo(new AIXTargetCodeGenInfo(Types, /*Is64Bit*/ true));
@@ -11046,7 +11057,8 @@ TargetCodeGenInfo::createEnqueuedBlockKernel(CodeGenFunction &CGF,
   llvm::SmallVector<llvm::Value *, 2> Args;
   for (auto &A : F->args())
     Args.push_back(&A);
-  Builder.CreateCall(Invoke, Args);
+  llvm::CallInst *call = Builder.CreateCall(Invoke, Args);
+  call->setCallingConv(Invoke->getCallingConv());
   Builder.CreateRetVoid();
   Builder.restoreIP(IP);
   return F;
@@ -11110,7 +11122,8 @@ llvm::Function *AMDGPUTargetCodeGenInfo::createEnqueuedBlockKernel(
   Args.push_back(Cast);
   for (auto I = F->arg_begin() + 1, E = F->arg_end(); I != E; ++I)
     Args.push_back(I);
-  Builder.CreateCall(Invoke, Args);
+  llvm::CallInst *call = Builder.CreateCall(Invoke, Args);
+  call->setCallingConv(Invoke->getCallingConv());
   Builder.CreateRetVoid();
   Builder.restoreIP(IP);
 

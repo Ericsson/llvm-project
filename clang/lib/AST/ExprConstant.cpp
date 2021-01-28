@@ -5142,8 +5142,11 @@ static EvalStmtResult EvaluateStmt(StmtResult &Result, EvalInfo &Info,
   case Stmt::ReturnStmtClass: {
     const Expr *RetExpr = cast<ReturnStmt>(S)->getRetValue();
     FullExpressionRAII Scope(Info);
-    if (RetExpr && RetExpr->isValueDependent())
-      return EvaluateDependentExpr(RetExpr, Info) ? ESR_Returned : ESR_Failed;
+    if (RetExpr && RetExpr->isValueDependent()) {
+      EvaluateDependentExpr(RetExpr, Info);
+      // We know we returned, but we don't know what the value is.
+      return ESR_Failed;
+    }
     if (RetExpr &&
         !(Result.Slot
               ? EvaluateInPlace(Result.Value, Info, *Result.Slot, RetExpr)
@@ -9795,7 +9798,14 @@ bool RecordExprEvaluator::VisitInitListExpr(const InitListExpr *E) {
     ThisOverrideRAII ThisOverride(*Info.CurrentCall, &This,
                                   isa<CXXDefaultInitExpr>(InitExpr));
 
-    return EvaluateInPlace(Result.getUnionValue(), Info, Subobject, InitExpr);
+    if (EvaluateInPlace(Result.getUnionValue(), Info, Subobject, InitExpr)) {
+      if (Field->isBitField())
+        return truncateBitfieldValue(Info, InitExpr, Result.getUnionValue(),
+                                     Field);
+      return true;
+    }
+
+    return false;
   }
 
   if (!Result.hasValue())
@@ -10190,7 +10200,7 @@ bool VectorExprEvaluator::VisitCastExpr(const CastExpr *E) {
           Elt = SValInt.rotl(i*EltSize+EltSize).zextOrTrunc(EltSize);
         else
           Elt = SValInt.rotr(i*EltSize).zextOrTrunc(EltSize);
-        Elts.push_back(APValue(APSInt(Elt, EltTy->isSignedIntegerType())));
+        Elts.push_back(APValue(APSInt(Elt, !EltTy->isSignedIntegerType())));
       }
     } else {
       return Error(E);
@@ -10965,7 +10975,7 @@ EvaluateBuiltinClassifyType(QualType T, const LangOptions &LangOpts) {
 #define SVE_TYPE(Name, Id, SingletonId) \
     case BuiltinType::Id:
 #include "clang/Basic/AArch64SVEACLETypes.def"
-#define PPC_MMA_VECTOR_TYPE(Name, Id, Size) \
+#define PPC_VECTOR_TYPE(Name, Id, Size) \
     case BuiltinType::Id:
 #include "clang/Basic/PPCTypes.def"
       return GCCTypeClass::None;

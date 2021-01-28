@@ -349,6 +349,22 @@ TEST(LocateSymbol, WithIndex) {
       ElementsAre(Sym("Forward", SymbolHeader.range("forward"), Test.range())));
 }
 
+TEST(LocateSymbol, FindOverrides) {
+  auto Code = Annotations(R"cpp(
+    class Foo {
+      virtual void $1[[fo^o]]() = 0;
+    };
+    class Bar : public Foo {
+      void $2[[foo]]() override;
+    };
+  )cpp");
+  TestTU TU = TestTU::withCode(Code.code());
+  auto AST = TU.build();
+  EXPECT_THAT(locateSymbolAt(AST, Code.point(), TU.index().get()),
+              UnorderedElementsAre(Sym("foo", Code.range("1"), llvm::None),
+                                   Sym("foo", Code.range("2"), llvm::None)));
+}
+
 TEST(LocateSymbol, WithIndexPreferredLocation) {
   Annotations SymbolHeader(R"cpp(
         class $p[[Proto]] {};
@@ -622,6 +638,134 @@ TEST(LocateSymbol, All) {
 
         template <typename T>
         struct Fo^o<T*> {};
+      )cpp",
+
+      R"cpp(// auto builtin type (not supported)
+        ^auto x = 42;
+      )cpp",
+
+      R"cpp(// auto on lambda
+        auto x = [[[]]]{};
+        ^auto y = x;
+      )cpp",
+
+      R"cpp(// auto on struct
+        namespace ns1 {
+        struct [[S1]] {};
+        } // namespace ns1
+
+        ^auto x = ns1::S1{};
+      )cpp",
+
+      R"cpp(// decltype on struct
+        namespace ns1 {
+        struct [[S1]] {};
+        } // namespace ns1
+
+        ns1::S1 i;
+        ^decltype(i) j;
+      )cpp",
+
+      R"cpp(// decltype(auto) on struct
+        namespace ns1 {
+        struct [[S1]] {};
+        } // namespace ns1
+
+        ns1::S1 i;
+        ns1::S1& j = i;
+        ^decltype(auto) k = j;
+      )cpp",
+
+      R"cpp(// auto on template class
+        template<typename T> class [[Foo]] {};
+
+        ^auto x = Foo<int>();
+      )cpp",
+
+      R"cpp(// auto on template class with forward declared class
+        template<typename T> class [[Foo]] {};
+        class X;
+
+        ^auto x = Foo<X>();
+      )cpp",
+
+      R"cpp(// auto on specialized template class
+        template<typename T> class Foo {};
+        template<> class [[Foo]]<int> {};
+
+        ^auto x = Foo<int>();
+      )cpp",
+
+      R"cpp(// auto on initializer list.
+        namespace std
+        {
+          template<class _E>
+          class [[initializer_list]] {};
+        }
+
+        ^auto i = {1,2};
+      )cpp",
+
+      R"cpp(// auto function return with trailing type
+        struct [[Bar]] {};
+        ^auto test() -> decltype(Bar()) {
+          return Bar();
+        }
+      )cpp",
+
+      R"cpp(// decltype in trailing return type
+        struct [[Bar]] {};
+        auto test() -> ^decltype(Bar()) {
+          return Bar();
+        }
+      )cpp",
+
+      R"cpp(// auto in function return
+        struct [[Bar]] {};
+        ^auto test() {
+          return Bar();
+        }
+      )cpp",
+
+      R"cpp(// auto& in function return
+        struct [[Bar]] {};
+        ^auto& test() {
+          static Bar x;
+          return x;
+        }
+      )cpp",
+
+      R"cpp(// auto* in function return
+        struct [[Bar]] {};
+        ^auto* test() {
+          Bar* x;
+          return x;
+        }
+      )cpp",
+
+      R"cpp(// const auto& in function return
+        struct [[Bar]] {};
+        const ^auto& test() {
+          static Bar x;
+          return x;
+        }
+      )cpp",
+
+      R"cpp(// decltype(auto) in function return
+        struct [[Bar]] {};
+        ^decltype(auto) test() {
+          return Bar();
+        }
+      )cpp",
+
+      R"cpp(// decltype of function with trailing return type.
+        struct [[Bar]] {};
+        auto test() -> decltype(Bar()) {
+          return Bar();
+        }
+        void foo() {
+          ^decltype(test()) i = test();
+        }
       )cpp",
 
       R"cpp(// Override specifier jumps to overridden method
@@ -1467,11 +1611,11 @@ TEST(LocateSymbol, NearbyIdentifier) {
 
 TEST(FindImplementations, Inheritance) {
   llvm::StringRef Test = R"cpp(
-    struct Base {
+    struct $0^Base {
       virtual void F$1^oo();
       void C$4^oncrete();
     };
-    struct Child1 : Base {
+    struct $0[[Child1]] : Base {
       void $1[[Fo$3^o]]() override;
       virtual void B$2^ar();
       void Concrete();  // No implementations for concrete methods.
@@ -1481,7 +1625,7 @@ TEST(FindImplementations, Inheritance) {
       void $2[[Bar]]() override;
     };
     void FromReference() {
-      Base* B;
+      $0^Base* B;
       B->Fo$1^o();
       B->C$4^oncrete();
       &Base::Fo$1^o;
@@ -1489,14 +1633,32 @@ TEST(FindImplementations, Inheritance) {
       C1->B$2^ar();
       C1->Fo$3^o();
     }
+    // CRTP should work.
+    template<typename T>
+    struct $5^TemplateBase {};
+    struct $5[[Child3]] : public TemplateBase<Child3> {};
+
+    // Local classes.
+    void LocationFunction() {
+      struct $0[[LocalClass1]] : Base {
+        void $1[[Foo]]() override;
+      };
+      struct $6^LocalBase {
+        virtual void $7^Bar();
+      };
+      struct $6[[LocalClass2]]: LocalBase {
+        void $7[[Bar]]() override;
+      };
+    }
   )cpp";
 
   Annotations Code(Test);
   auto TU = TestTU::withCode(Code.code());
   auto AST = TU.build();
-  for (const std::string &Label : {"1", "2", "3", "4"}) {
+  auto Index = TU.index();
+  for (StringRef Label : {"0", "1", "2", "3", "4", "5", "6", "7"}) {
     for (const auto &Point : Code.points(Label)) {
-      EXPECT_THAT(findImplementations(AST, Point, TU.index().get()),
+      EXPECT_THAT(findImplementations(AST, Point, Index.get()),
                   UnorderedPointwise(DeclRange(), Code.ranges(Label)))
           << Code.code() << " at " << Point << " for Label " << Label;
     }
@@ -1624,6 +1786,14 @@ TEST(FindReferences, WithinAST) {
         }
       )cpp",
 
+      R"cpp(// Macro outside preamble
+        int breakPreamble;
+        #define [[MA^CRO]](X) (X+1)
+        void test() {
+          int x = [[MACRO]]([[MACRO]](1));
+        }
+      )cpp",
+
       R"cpp(
         int [[v^ar]] = 0;
         void foo(int s = [[var]]);
@@ -1673,6 +1843,31 @@ TEST(FindReferences, WithinAST) {
                 ElementsAreArray(ExpectedLocations))
         << Test;
   }
+}
+
+TEST(FindReferences, IncludeOverrides) {
+  llvm::StringRef Test =
+      R"cpp(
+        class Base {
+        public:
+          virtual void [[f^unc]]() = 0;
+        };
+        class Derived : public Base {
+        public:
+          void [[func]]() override;
+        };
+        void test(Derived* D) {
+          D->[[func]]();
+        })cpp";
+  Annotations T(Test);
+  auto TU = TestTU::withCode(T.code());
+  auto AST = TU.build();
+  std::vector<Matcher<Location>> ExpectedLocations;
+  for (const auto &R : T.ranges())
+    ExpectedLocations.push_back(RangeIs(R));
+  EXPECT_THAT(findReferences(AST, T.point(), 0, TU.index().get()).References,
+              ElementsAreArray(ExpectedLocations))
+      << Test;
 }
 
 TEST(FindReferences, MainFileReferencesOnly) {

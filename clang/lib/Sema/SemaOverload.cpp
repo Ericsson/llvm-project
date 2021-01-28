@@ -9926,6 +9926,7 @@ bool Sema::isEquivalentInternalLinkageDeclaration(const NamedDecl *A,
 
 void Sema::diagnoseEquivalentInternalLinkageDeclarations(
     SourceLocation Loc, const NamedDecl *D, ArrayRef<const NamedDecl *> Equiv) {
+  assert(D && "Unknown declaration");
   Diag(Loc, diag::ext_equivalent_internal_linkage_decl_in_modules) << D;
 
   Module *M = getOwningModule(D);
@@ -12923,7 +12924,7 @@ BuildRecoveryCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
     return ExprError();
   }
 
-  // Build an implicit member access expression if appropriate. Just drop the
+  // Build an implicit member call if appropriate.  Just drop the
   // casts and such from the call, we don't really care.
   ExprResult NewFn = ExprError();
   if ((*R.begin())->isCXXClassMember())
@@ -12938,19 +12939,12 @@ BuildRecoveryCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
   if (NewFn.isInvalid())
     return ExprError();
 
-  auto CallE =
-      SemaRef.BuildCallExpr(/*Scope*/ nullptr, NewFn.get(), LParenLoc,
-                            MultiExprArg(Args.data(), Args.size()), RParenLoc);
-  if (CallE.isInvalid())
-    return ExprError();
-  // We now have recovered a callee. However, building a real call may lead to
-  // incorrect secondary diagnostics if our recovery wasn't correct.
-  // We keep the recovery behavior but suppress all following diagnostics by
-  // using RecoveryExpr. We deliberately drop the return type of the recovery
-  // function, and rely on clang's dependent mechanism to suppress following
-  // diagnostics.
-  return SemaRef.CreateRecoveryExpr(CallE.get()->getBeginLoc(),
-                                    CallE.get()->getEndLoc(), {CallE.get()});
+  // This shouldn't cause an infinite loop because we're giving it
+  // an expression with viable lookup results, which should never
+  // end up here.
+  return SemaRef.BuildCallExpr(/*Scope*/ nullptr, NewFn.get(), LParenLoc,
+                               MultiExprArg(Args.data(), Args.size()),
+                               RParenLoc);
 }
 
 /// Constructs and populates an OverloadedCandidateSet from
@@ -14154,11 +14148,11 @@ Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
 /// parameter). The caller needs to validate that the member
 /// expression refers to a non-static member function or an overloaded
 /// member function.
-ExprResult
-Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
-                                SourceLocation LParenLoc,
-                                MultiExprArg Args,
-                                SourceLocation RParenLoc) {
+ExprResult Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
+                                           SourceLocation LParenLoc,
+                                           MultiExprArg Args,
+                                           SourceLocation RParenLoc,
+                                           bool AllowRecovery) {
   assert(MemExprE->getType() == Context.BoundMemberTy ||
          MemExprE->getType() == Context.OverloadTy);
 
@@ -14215,6 +14209,17 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
     return MaybeBindToTemporary(call);
   }
 
+  // We only try to build a recovery expr at this level if we can preserve
+  // the return type, otherwise we return ExprError() and let the caller
+  // recover.
+  auto BuildRecoveryExpr = [&](QualType Type) {
+    if (!AllowRecovery)
+      return ExprError();
+    std::vector<Expr *> SubExprs = {MemExprE};
+    llvm::for_each(Args, [&SubExprs](Expr *E) { SubExprs.push_back(E); });
+    return CreateRecoveryExpr(MemExprE->getBeginLoc(), RParenLoc, SubExprs,
+                              Type);
+  };
   if (isa<CXXPseudoDestructorExpr>(NakedMemExpr))
     return CallExpr::Create(Context, MemExprE, Args, Context.VoidTy, VK_RValue,
                             RParenLoc, CurFPFeatureOverrides());
@@ -14289,6 +14294,7 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
     UnbridgedCasts.restore();
 
     OverloadCandidateSet::iterator Best;
+    bool Succeeded = false;
     switch (CandidateSet.BestViableFunction(*this, UnresExpr->getBeginLoc(),
                                             Best)) {
     case OR_Success:
@@ -14296,7 +14302,7 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
       FoundDecl = Best->FoundDecl;
       CheckUnresolvedMemberAccess(UnresExpr, Best->FoundDecl);
       if (DiagnoseUseOfDecl(Best->FoundDecl, UnresExpr->getNameLoc()))
-        return ExprError();
+        break;
       // If FoundDecl is different from Method (such as if one is a template
       // and the other a specialization), make sure DiagnoseUseOfDecl is
       // called on both.
@@ -14305,7 +14311,8 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
       // being used.
       if (Method != FoundDecl.getDecl() &&
                       DiagnoseUseOfDecl(Method, UnresExpr->getNameLoc()))
-        return ExprError();
+        break;
+      Succeeded = true;
       break;
 
     case OR_No_Viable_Function:
@@ -14315,27 +14322,25 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
               PDiag(diag::err_ovl_no_viable_member_function_in_call)
                   << DeclName << MemExprE->getSourceRange()),
           *this, OCD_AllCandidates, Args);
-      // FIXME: Leaking incoming expressions!
-      return ExprError();
-
+      break;
     case OR_Ambiguous:
       CandidateSet.NoteCandidates(
           PartialDiagnosticAt(UnresExpr->getMemberLoc(),
                               PDiag(diag::err_ovl_ambiguous_member_call)
                                   << DeclName << MemExprE->getSourceRange()),
           *this, OCD_AmbiguousCandidates, Args);
-      // FIXME: Leaking incoming expressions!
-      return ExprError();
-
+      break;
     case OR_Deleted:
       CandidateSet.NoteCandidates(
           PartialDiagnosticAt(UnresExpr->getMemberLoc(),
                               PDiag(diag::err_ovl_deleted_member_call)
                                   << DeclName << MemExprE->getSourceRange()),
           *this, OCD_AllCandidates, Args);
-      // FIXME: Leaking incoming expressions!
-      return ExprError();
+      break;
     }
+    // Overload resolution fails, try to recover.
+    if (!Succeeded)
+      return BuildRecoveryExpr(chooseRecoveryType(CandidateSet, &Best));
 
     MemExprE = FixOverloadedFunctionReference(MemExprE, FoundDecl, Method);
 
@@ -14362,7 +14367,7 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
   // Check for a valid return type.
   if (CheckCallReturnType(Method->getReturnType(), MemExpr->getMemberLoc(),
                           TheCall, Method))
-    return ExprError();
+    return BuildRecoveryExpr(ResultType);
 
   // Convert the object argument (for a non-static member function call).
   // We only need to do this if there was actually an overload; otherwise
@@ -14379,7 +14384,7 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
   // Convert the rest of the arguments
   if (ConvertArgumentsForCall(TheCall, MemExpr, Method, Proto, Args,
                               RParenLoc))
-    return ExprError();
+    return BuildRecoveryExpr(ResultType);
 
   DiagnoseSentinelCalls(Method, LParenLoc, Args);
 

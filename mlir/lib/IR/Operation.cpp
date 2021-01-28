@@ -76,20 +76,22 @@ Operation *Operation::create(Location location, OperationName name,
                              ArrayRef<NamedAttribute> attributes,
                              BlockRange successors, unsigned numRegions) {
   return create(location, name, resultTypes, operands,
-                MutableDictionaryAttr(attributes), successors, numRegions);
+                DictionaryAttr::get(attributes, location.getContext()),
+                successors, numRegions);
 }
 
 /// Create a new Operation from operation state.
 Operation *Operation::create(const OperationState &state) {
   return create(state.location, state.name, state.types, state.operands,
-                state.attributes, state.successors, state.regions);
+                state.attributes.getDictionary(state.getContext()),
+                state.successors, state.regions);
 }
 
 /// Create a new Operation with the specific fields.
 Operation *Operation::create(Location location, OperationName name,
                              TypeRange resultTypes, ValueRange operands,
-                             MutableDictionaryAttr attributes,
-                             BlockRange successors, RegionRange regions) {
+                             DictionaryAttr attributes, BlockRange successors,
+                             RegionRange regions) {
   unsigned numRegions = regions.size();
   Operation *op = create(location, name, resultTypes, operands, attributes,
                          successors, numRegions);
@@ -99,12 +101,12 @@ Operation *Operation::create(Location location, OperationName name,
   return op;
 }
 
-/// Overload of create that takes an existing MutableDictionaryAttr to avoid
+/// Overload of create that takes an existing DictionaryAttr to avoid
 /// unnecessarily uniquing a list of attributes.
 Operation *Operation::create(Location location, OperationName name,
                              TypeRange resultTypes, ValueRange operands,
-                             MutableDictionaryAttr attributes,
-                             BlockRange successors, unsigned numRegions) {
+                             DictionaryAttr attributes, BlockRange successors,
+                             unsigned numRegions) {
   // We only need to allocate additional memory for a subset of results.
   unsigned numTrailingResults = OpResult::getNumTrailing(resultTypes.size());
   unsigned numInlineResults = OpResult::getNumInline(resultTypes.size());
@@ -164,12 +166,12 @@ Operation *Operation::create(Location location, OperationName name,
 
 Operation::Operation(Location location, OperationName name,
                      TypeRange resultTypes, unsigned numSuccessors,
-                     unsigned numRegions,
-                     const MutableDictionaryAttr &attributes,
+                     unsigned numRegions, DictionaryAttr attributes,
                      bool hasOperandStorage)
     : location(location), numSuccs(numSuccessors), numRegions(numRegions),
       hasOperandStorage(hasOperandStorage), hasSingleResult(false), name(name),
       attrs(attributes) {
+  assert(attributes && "unexpected null attribute dictionary");
   assert(llvm::all_of(resultTypes, [](Type t) { return t; }) &&
          "unexpected null result type");
   if (!resultTypes.empty()) {
@@ -178,7 +180,7 @@ Operation::Operation(Location location, OperationName name,
     if (hasSingleResult)
       resultType = resultTypes.front();
     else
-      resultType = TupleType::get(resultTypes, location->getContext());
+      resultType = TupleType::get(location->getContext(), resultTypes);
   }
 }
 
@@ -1182,6 +1184,48 @@ void impl::printOneResultOp(Operation *op, OpAsmPrinter &p) {
 // CastOp implementation
 //===----------------------------------------------------------------------===//
 
+/// Attempt to fold the given cast operation.
+LogicalResult
+impl::foldCastInterfaceOp(Operation *op, ArrayRef<Attribute> attrOperands,
+                          SmallVectorImpl<OpFoldResult> &foldResults) {
+  OperandRange operands = op->getOperands();
+  if (operands.empty())
+    return failure();
+  ResultRange results = op->getResults();
+
+  // Check for the case where the input and output types match 1-1.
+  if (operands.getTypes() == results.getTypes()) {
+    foldResults.append(operands.begin(), operands.end());
+    return success();
+  }
+
+  return failure();
+}
+
+/// Attempt to verify the given cast operation.
+LogicalResult impl::verifyCastInterfaceOp(
+    Operation *op, function_ref<bool(TypeRange, TypeRange)> areCastCompatible) {
+  auto resultTypes = op->getResultTypes();
+  if (llvm::empty(resultTypes))
+    return op->emitOpError()
+           << "expected at least one result for cast operation";
+
+  auto operandTypes = op->getOperandTypes();
+  if (!areCastCompatible(operandTypes, resultTypes)) {
+    InFlightDiagnostic diag = op->emitOpError("operand type");
+    if (llvm::empty(operandTypes))
+      diag << "s []";
+    else if (llvm::size(operandTypes) == 1)
+      diag << " " << *operandTypes.begin();
+    else
+      diag << "s " << operandTypes;
+    return diag << " and result type" << (resultTypes.size() == 1 ? " " : "s ")
+                << resultTypes << " are cast incompatible";
+  }
+
+  return success();
+}
+
 void impl::buildCastOp(OpBuilder &builder, OperationState &result, Value source,
                        Type destType) {
   result.addOperands(source);
@@ -1211,6 +1255,19 @@ Value impl::foldCastOp(Operation *op) {
   if (op->getOperand(0).getType() == op->getResult(0).getType())
     return op->getOperand(0);
   return nullptr;
+}
+
+LogicalResult
+impl::verifyCastOp(Operation *op,
+                   function_ref<bool(Type, Type)> areCastCompatible) {
+  auto opType = op->getOperand(0).getType();
+  auto resType = op->getResult(0).getType();
+  if (!areCastCompatible(opType, resType))
+    return op->emitError("operand type ")
+           << opType << " and result type " << resType
+           << " are cast incompatible";
+
+  return success();
 }
 
 //===----------------------------------------------------------------------===//

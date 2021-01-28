@@ -795,7 +795,7 @@ void ModuleSanitizerCoverage::InjectTraceForSwitch(
           C = ConstantExpr::getCast(CastInst::ZExt, It.getCaseValue(), Int64Ty);
         Initializers.push_back(C);
       }
-      llvm::sort(Initializers.begin() + 2, Initializers.end(),
+      llvm::sort(drop_begin(Initializers, 2),
                  [](const Constant *A, const Constant *B) {
                    return cast<ConstantInt>(A)->getLimitedValue() <
                           cast<ConstantInt>(B)->getLimitedValue();
@@ -883,7 +883,7 @@ void ModuleSanitizerCoverage::InjectCoverageAtBlock(Function &F, BasicBlock &BB,
   DebugLoc EntryLoc;
   if (IsEntryBB) {
     if (auto SP = F.getSubprogram())
-      EntryLoc = DebugLoc::get(SP->getScopeLine(), 0, SP);
+      EntryLoc = DILocation::get(SP->getContext(), SP->getScopeLine(), 0, SP);
     // Keep static allocas and llvm.localescape calls in the entry block.  Even
     // if we aren't splitting the block, it's nice for allocas to be before
     // calls.

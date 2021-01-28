@@ -334,6 +334,11 @@ static Optional<APInt> buildAttributeAPInt(Type type, bool isNegative,
   // Extend or truncate the bitwidth to the right size.
   unsigned width = type.isIndex() ? IndexType::kInternalStorageBitWidth
                                   : type.getIntOrFloatBitWidth();
+
+  // APInt cannot hold a zero bit value.
+  if (width == 0)
+    return llvm::None;
+
   if (width > result.getBitWidth()) {
     result = result.zext(width);
   } else if (width < result.getBitWidth()) {
@@ -528,6 +533,13 @@ DenseElementsAttr TensorLiteralParser::getAttr(llvm::SMLoc loc,
   if (!shape.empty() && getShape() != type.getShape()) {
     p.emitError(loc) << "inferred shape of elements literal ([" << getShape()
                      << "]) does not match type ([" << type.getShape() << "])";
+    return nullptr;
+  }
+
+  // Handle the case where no elements were parsed.
+  if (!hexStorage.hasValue() && storage.empty() && type.getNumElements()) {
+    p.emitError(loc) << "parsed zero elements, but type (" << type
+                     << ") expected at least 1";
     return nullptr;
   }
 
