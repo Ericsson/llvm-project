@@ -273,13 +273,6 @@ New checks
   file, which often leads to hard-to-track-down ODR violations, and diagnoses
   them.
 
-- New :doc:`ericcson-cert-env32-c
-  <clang-tidy/checks/ericsson-cert-env32-c>` check.
-
-  Finds functions registered by ``atexit`` and ``at_quick_exit`` that are
-  calling exit functions ``_Exit``, ``exit``, ``quick_exit`` or ``abort`` or
-  ``longjmp``.
-
 - New :doc:`cert-oop57-cpp
   <clang-tidy/checks/cert-oop57-cpp>` check.
 
