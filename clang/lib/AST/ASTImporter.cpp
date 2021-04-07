@@ -3989,6 +3989,7 @@ ExpectedDecl ASTNodeImporter::VisitVarDecl(VarDecl *D) {
                               D->getStorageClass()))
     return ToVar;
 
+  ToVar->setTSCSpec(D->getTSCSpec());
   ToVar->setQualifierInfo(ToQualifierLoc);
   ToVar->setAccess(D->getAccess());
   ToVar->setLexicalDeclContext(LexicalDC);
@@ -5352,16 +5353,16 @@ ExpectedDecl ASTNodeImporter::VisitClassTemplateDecl(ClassTemplateDecl *D) {
 
   CXXRecordDecl *FromTemplated = D->getTemplatedDecl();
 
+  auto TemplateParamsOrErr = import(D->getTemplateParameters());
+  if (!TemplateParamsOrErr)
+    return TemplateParamsOrErr.takeError();
+
   // Create the declaration that is being templated.
   CXXRecordDecl *ToTemplated;
   if (Error Err = importInto(ToTemplated, FromTemplated))
     return std::move(Err);
 
   // Create the class template declaration itself.
-  auto TemplateParamsOrErr = import(D->getTemplateParameters());
-  if (!TemplateParamsOrErr)
-    return TemplateParamsOrErr.takeError();
-
   ClassTemplateDecl *D2;
   if (GetImportedOrCreateDecl(D2, D, Importer.getToContext(), DC, Loc, Name,
                               *TemplateParamsOrErr, ToTemplated))
@@ -8135,6 +8136,16 @@ Expected<Attr *> ASTImporter::Import(const Attr *FromAttr) {
     To->setInherited(From->isInherited());
     To->setPackExpansion(From->isPackExpansion());
     To->setImplicit(From->isImplicit());
+    ToAttr = To;
+    break;
+  }
+  case attr::Format: {
+    const auto *From = cast<FormatAttr>(FromAttr);
+    FormatAttr *To;
+    IdentifierInfo *ToAttrType = Import(From->getType());
+    To = FormatAttr::Create(ToContext, ToAttrType, From->getFormatIdx(),
+                            From->getFirstArg(), ToRange, From->getSyntax());
+    To->setInherited(From->isInherited());
     ToAttr = To;
     break;
   }

@@ -952,6 +952,12 @@ TEST_P(ImportDecl, ImportRecordDeclInFunc) {
                  has(declStmt(hasSingleDecl(varDecl(hasName("d")))))))));
 }
 
+TEST_P(ImportDecl, ImportedVarDeclPreservesThreadLocalStorage) {
+  MatchVerifier<Decl> Verifier;
+  testImport("thread_local int declToImport;", Lang_CXX11, "", Lang_CXX11,
+             Verifier, varDecl(hasThreadStorageDuration()));
+}
+
 TEST_P(ASTImporterOptionSpecificTestBase, ImportRecordTypeInFunc) {
   Decl *FromTU = getTuDecl("int declToImport() { "
                            "  struct data_t {int a;int b;};"
@@ -6024,6 +6030,31 @@ TEST_P(ASTImporterOptionSpecificTestBase, ImportExprOfAlignmentAttr) {
   EXPECT_TRUE(ToA);
 }
 
+TEST_P(ASTImporterOptionSpecificTestBase, ImportFormatAttr) {
+  Decl *FromTU = getTuDecl(
+      R"(
+      int foo(const char * fmt, ...)
+      __attribute__ ((__format__ (__scanf__, 1, 2)));
+      )",
+      Lang_CXX03, "input.cc");
+  auto *FromD = FirstDeclMatcher<FunctionDecl>().match(
+      FromTU, functionDecl(hasName("foo")));
+  ASSERT_TRUE(FromD);
+
+  auto *ToD = Import(FromD, Lang_CXX03);
+  ASSERT_TRUE(ToD);
+  ToD->dump(); // Should not crash!
+
+  auto *FromAttr = FromD->getAttr<FormatAttr>();
+  auto *ToAttr = ToD->getAttr<FormatAttr>();
+  EXPECT_EQ(FromAttr->isInherited(), ToAttr->isInherited());
+  EXPECT_EQ(FromAttr->isPackExpansion(), ToAttr->isPackExpansion());
+  EXPECT_EQ(FromAttr->isImplicit(), ToAttr->isImplicit());
+  EXPECT_EQ(FromAttr->getSyntax(), ToAttr->getSyntax());
+  EXPECT_EQ(FromAttr->getAttributeSpellingListIndex(),
+            ToAttr->getAttributeSpellingListIndex());
+  EXPECT_EQ(FromAttr->getType()->getName(), ToAttr->getType()->getName());
+}
 template <typename T>
 auto ExtendWithOptions(const T &Values, const std::vector<std::string> &Args) {
   auto Copy = Values;
@@ -6168,6 +6199,41 @@ TEST_P(ASTImporterOptionSpecificTestBase, TypedefWithAttribute) {
   auto *ToAttr = dyn_cast<AnnotateAttr>(ToD->getAttrs()[0]);
   ASSERT_TRUE(ToAttr);
   EXPECT_EQ(ToAttr->getAnnotation(), "A");
+}
+
+TEST_P(ASTImporterOptionSpecificTestBase,
+       ImportOfTemplatedDeclWhenPreviousDeclHasNoDescribedTemplateSet) {
+  Decl *FromTU = getTuDecl(
+      R"(
+
+      namespace std {
+        template<typename T>
+        class basic_stringbuf;
+      }
+      namespace std {
+        class char_traits;
+        template<typename T = char_traits>
+        class basic_stringbuf;
+      }
+      namespace std {
+        template<typename T>
+        class basic_stringbuf {};
+      }
+
+      )",
+      Lang_CXX11);
+
+  auto *From1 = FirstDeclMatcher<ClassTemplateDecl>().match(
+      FromTU,
+      classTemplateDecl(hasName("basic_stringbuf"), unless(isImplicit())));
+  auto *To1 = cast_or_null<ClassTemplateDecl>(Import(From1, Lang_CXX11));
+  EXPECT_TRUE(To1);
+
+  auto *From2 = LastDeclMatcher<ClassTemplateDecl>().match(
+      FromTU,
+      classTemplateDecl(hasName("basic_stringbuf"), unless(isImplicit())));
+  auto *To2 = cast_or_null<ClassTemplateDecl>(Import(From2, Lang_CXX11));
+  EXPECT_TRUE(To2);
 }
 
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ASTImporterLookupTableTest,
