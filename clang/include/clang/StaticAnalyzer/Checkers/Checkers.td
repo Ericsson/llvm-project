@@ -377,6 +377,11 @@ def StdCLibraryFunctionsChecker : Checker<"StdCLibraryFunctions">,
                   "If set to true, the checker models functions from the "
                   "POSIX standard.",
                   "false",
+                  InAlpha>,
+    CmdLineOption<String,
+                  "SummaryConfigPath",
+                  "The path of the config file in YAML format",
+                  "",
                   InAlpha>
   ]>,
   Documentation<NotDocumented>,

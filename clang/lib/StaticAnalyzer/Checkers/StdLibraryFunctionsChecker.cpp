@@ -52,10 +52,101 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 
+#include "Yaml.h"
+#include "llvm/Support/YAMLTraits.h"
+
 #include <string>
 
 using namespace clang;
 using namespace clang::ento;
+
+
+
+//SUMMARY CONFIGURATION PARSING
+
+
+struct SummaryConfiguration{
+  enum class ArgConstraintType{
+    NotNull,
+    BufferSize
+  };
+  struct ArgConstraint{
+    ArgConstraintType type;
+    int arg; //Arg count in case of NotNull constraint type
+    int bufferArg; // Arg count of the destination buffer
+    int sizeArg; //arg count of the size argument
+    int countArg; //arg count of the element count argument
+  };
+  struct Signature{
+    std::vector<std::string> argTypes;
+    std::string returnType;
+  };
+  enum class EvaluationType{
+    NoEvalCall,
+    EvalCallAsPure
+  };
+  struct Summary{
+    std::string name;
+    EvaluationType evaluationType;
+    Signature signature;
+    std::vector<ArgConstraint> argConstraints;
+
+  };
+  std::vector<Summary> summaries;
+};
+
+LLVM_YAML_IS_SEQUENCE_VECTOR(SummaryConfiguration::Summary)
+LLVM_YAML_IS_SEQUENCE_VECTOR(SummaryConfiguration::ArgConstraint)
+
+// YAML CONFIG PARSING
+namespace llvm {
+namespace yaml {
+template <> struct MappingTraits<SummaryConfiguration> {
+  static void mapping(IO &IO, SummaryConfiguration &Config) {
+    IO.mapRequired("Summaries", Config.summaries);
+  }
+};
+template <> struct MappingTraits<SummaryConfiguration::Summary> {
+  static void mapping(IO &IO, SummaryConfiguration::Summary &Config) {
+    IO.mapRequired("Name", Config.name);
+    IO.mapRequired("EvaluationType", Config.evaluationType);
+    IO.mapRequired("Signature", Config.signature);
+    IO.mapRequired("ArgConstraints", Config.argConstraints);
+  }
+};
+template <> struct ScalarEnumerationTraits<SummaryConfiguration::EvaluationType> {
+  static void enumeration(IO &IO, SummaryConfiguration::EvaluationType &Config) {
+    IO.enumCase(Config, "NoEvalCall", SummaryConfiguration::EvaluationType::NoEvalCall);
+    IO.enumCase(Config, "EvalCallAsPure", SummaryConfiguration::EvaluationType::EvalCallAsPure);
+  }
+};
+template <> struct MappingTraits<SummaryConfiguration::Signature> {
+  static void mapping(IO &IO, SummaryConfiguration::Signature &Config) {
+    IO.mapRequired("ArgTypes", Config.argTypes);
+    IO.mapRequired("RetType", Config.returnType);
+  }
+};
+
+template <> struct ScalarEnumerationTraits<SummaryConfiguration::ArgConstraintType> {
+  static void enumeration(IO &IO, SummaryConfiguration::ArgConstraintType &Config) {
+    IO.enumCase(Config, "NotNull", SummaryConfiguration::ArgConstraintType::NotNull);
+    IO.enumCase(Config, "BufferSize", SummaryConfiguration::ArgConstraintType::BufferSize);
+  }
+};
+
+template <> struct MappingTraits<SummaryConfiguration::ArgConstraint> {
+  static void mapping(IO &IO, SummaryConfiguration::ArgConstraint &Config) {
+    IO.mapRequired("type", Config.type);
+    IO.mapOptional("arg", Config.arg);
+    IO.mapOptional("bufferArg", Config.bufferArg);
+    IO.mapOptional("sizeArg", Config.sizeArg);
+    IO.mapOptional("countArg", Config.countArg);
+  }
+};
+
+} // namespace yaml
+} // namespace llvm
+
 
 namespace {
 class StdLibraryFunctionsChecker
@@ -683,6 +774,7 @@ public:
   bool DisplayLoadedSummaries = false;
   bool ModelPOSIX = false;
   bool ShouldAssumeControlledEnvironment = false;
+  std::string SummaryConfigPath;
 
 private:
   Optional<Summary> findFunctionSummary(const FunctionDecl *FD,
@@ -1357,6 +1449,96 @@ void StdLibraryFunctionsChecker::initFunctionSummaries(
   Optional<QualType> FilePtrTy = getPointerTy(FileTy);
   Optional<QualType> FilePtrRestrictTy = getRestrictTy(FilePtrTy);
 
+////////READING SUMMARY CONFIG/////////////////////
+
+// User-provided summary configuration.
+CheckerManager *Mgr = C.getAnalysisManager().getCheckerManager();
+std::string Option{"SummaryConfigPath"};
+      Mgr->getAnalyzerOptions().getCheckerStringOption(this, Option);
+llvm::Optional<SummaryConfiguration> Config =
+    getConfiguration<SummaryConfiguration>(*Mgr, this, Option, SummaryConfigPath);
+llvm::errs() << "Config :" << Config.has_value() << "\n";
+
+auto GetTypeFromStr = [&](StringRef TypeName) {
+  Optional<QualType> LType = lookupTy(TypeName);
+  if (LType)
+    return *LType;
+
+  return llvm::StringSwitch<QualType>(TypeName)
+      .Case("void *", VoidPtrTy)
+      .Case("void * restrict", VoidPtrRestrictTy)
+      .Default(Irrelevant);
+};
+
+if (Config.has_value()) {
+  for (const SummaryConfiguration::Summary &s : Config->summaries) {
+    ArgTypes Args;
+    for (const std::string &TypeName : s.signature.argTypes) {
+      llvm::errs() << "arg type string:" << TypeName << "\n";
+      QualType Type = GetTypeFromStr(TypeName);
+      llvm::errs() << "arg type dump:";
+      Type.dump();
+      llvm::errs() << "\n";
+
+      Args.push_back(Type);
+    }
+
+    const std::string &RetTypeName = s.signature.returnType;
+    llvm::errs() << "ret type string:" << RetTypeName << "\n";
+    QualType RetType = GetTypeFromStr(RetTypeName);
+    llvm::errs() << "ret type dump:";
+
+    auto GetSummary = [&s]() {
+      switch (s.evaluationType) {
+      case SummaryConfiguration::EvaluationType::NoEvalCall:
+        return Summary(NoEvalCall);
+      case SummaryConfiguration::EvaluationType::EvalCallAsPure:
+        return Summary(EvalCallAsPure);
+      }
+    };
+
+    Summary summary = GetSummary();
+
+    for (const SummaryConfiguration::ArgConstraint &AC : s.argConstraints) {
+      switch (AC.type) {
+      case SummaryConfiguration::ArgConstraintType::NotNull:
+        summary.ArgConstraint(NotNull(AC.arg));
+        break;
+      case SummaryConfiguration::ArgConstraintType::BufferSize:
+        summary.ArgConstraint(
+            BufferSize(AC.bufferArg, AC.sizeArg, AC.countArg));
+        break;
+      }
+    }
+
+    addToFunctionSummaryMap(s.name, Signature(Args, RetType), summary);
+  }
+}
+ /*
+ WE want to add this
+ auto FreadSummary =
+      Summary(NoEvalCall)
+          .Case({ReturnValueCondition(LessThanOrEq, ArgNo(2)),
+                 ReturnValueCondition(WithinRange, Range(0, SizeMax))},
+                ErrnoIrrelevant)
+          .ArgConstraint(NotNull(ArgNo(0)))
+          .ArgConstraint(NotNull(ArgNo(3)))
+          .ArgConstraint(BufferSize(ArgNo(0), ArgNo(1),
+                                    ArgNo(2)));
+  */
+  // size_t fread(void *restrict ptr, size_t size, size_t nitems,
+  //              FILE *restrict stream);
+  /*addToFunctionSummaryMap(
+      "fread",
+      Signature(ArgTypes{VoidPtrRestrictTy, SizeTy, SizeTy, FilePtrRestrictTy},
+                RetType{SizeTy}),
+      FreadSummary);*/
+
+
+////////////////////////////////////////////////////
+
+
+
   // We are finally ready to define specifications for all supported functions.
   //
   // Argument ranges should always cover all variants. If return value
@@ -1591,11 +1773,11 @@ void StdLibraryFunctionsChecker::initFunctionSummaries(
 
   // size_t fread(void *restrict ptr, size_t size, size_t nitems,
   //              FILE *restrict stream);
-  addToFunctionSummaryMap(
+  /*addToFunctionSummaryMap(
       "fread",
       Signature(ArgTypes{VoidPtrRestrictTy, SizeTy, SizeTy, FilePtrRestrictTy},
                 RetType{SizeTy}),
-      FreadSummary);
+      FreadSummary);*/
   // size_t fwrite(const void *restrict ptr, size_t size, size_t nitems,
   //               FILE *restrict stream);
   addToFunctionSummaryMap("fwrite",
@@ -2995,6 +3177,8 @@ void ento::registerStdCLibraryFunctionsChecker(CheckerManager &mgr) {
   Checker->ModelPOSIX = Opts.getCheckerBooleanOption(Checker, "ModelPOSIX");
   Checker->ShouldAssumeControlledEnvironment =
       Opts.ShouldAssumeControlledEnvironment;
+  Checker->SummaryConfigPath =
+      Opts.getCheckerStringOption(Checker, "SummaryConfigPath");
 }
 
 bool ento::shouldRegisterStdCLibraryFunctionsChecker(
