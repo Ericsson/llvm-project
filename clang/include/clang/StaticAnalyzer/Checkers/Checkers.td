@@ -996,6 +996,10 @@ def decodeValueOfObjCType : Checker<"decodeValueOfObjCType">,
 
 let ParentPackage = Security in {
 
+def ArrayBoundChecker : Checker<"ArrayBound">,
+  HelpText<"Warn about out of bounds access to memory">,
+  Documentation<HasDocumentation>;
+
 def FloatLoopCounter : Checker<"FloatLoopCounter">,
   HelpText<"Warn on using a floating point value as a loop counter (CERT: "
            "FLP30-C, FLP30-CPP)">,
@@ -1031,14 +1035,6 @@ let ParentPackage = POSAlpha in {
 } // end "alpha.cert.pos"
 
 let ParentPackage = SecurityAlpha in {
-
-def ArrayBoundChecker : Checker<"ArrayBound">,
-  HelpText<"Warn about buffer overflows (older checker)">,
-  Documentation<HasDocumentation>;
-
-def ArrayBoundCheckerV2 : Checker<"ArrayBoundV2">,
-  HelpText<"Warn about buffer overflows (newer checker)">,
-  Documentation<HasDocumentation>;
 
 def ReturnPointerRangeChecker : Checker<"ReturnPtrRange">,
   HelpText<"Check for an out-of-bound pointer being returned to callers">,

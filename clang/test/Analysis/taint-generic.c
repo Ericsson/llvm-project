@@ -2,7 +2,7 @@
 // RUN:   -Wno-incompatible-library-redeclaration -verify %s \
 // RUN:   -analyzer-checker=alpha.security.taint \
 // RUN:   -analyzer-checker=core \
-// RUN:   -analyzer-checker=alpha.security.ArrayBoundV2 \
+// RUN:   -analyzer-checker=security.ArrayBound \
 // RUN:   -analyzer-checker=debug.ExprInspection \
 // RUN:   -analyzer-config \
 // RUN:     alpha.security.taint.TaintPropagation:Config=%S/Inputs/taint-generic-config.yaml
@@ -12,7 +12,7 @@
 // RUN:   -DFILE_IS_STRUCT \
 // RUN:   -analyzer-checker=alpha.security.taint \
 // RUN:   -analyzer-checker=core \
-// RUN:   -analyzer-checker=alpha.security.ArrayBoundV2 \
+// RUN:   -analyzer-checker=security.ArrayBound \
 // RUN:   -analyzer-checker=debug.ExprInspection \
 // RUN:   -analyzer-config \
 // RUN:     alpha.security.taint.TaintPropagation:Config=%S/Inputs/taint-generic-config.yaml
