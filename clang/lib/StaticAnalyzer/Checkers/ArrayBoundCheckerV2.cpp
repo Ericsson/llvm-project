@@ -15,6 +15,7 @@
 #include "clang/AST/ParentMapContext.h"
 #include "clang/StaticAnalyzer/Checkers/BuiltinCheckerRegistration.h"
 #include "clang/StaticAnalyzer/Checkers/Taint.h"
+#include "clang/StaticAnalyzer/Core/BugReporter/BugReporterVisitors.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
@@ -113,6 +114,46 @@ private:
 struct Messages {
   std::string Short, Full;
 };
+
+/// A rough-and-dirty hack that suppresses bug reports that depend on a symbol
+/// whose value is arbitrarily assumed in the condition of a for loop.
+class ForConditionSuppressionBRVisitor final : public BugReporterVisitor {
+public:
+  static void *getTag() {
+    static int Tag = 0;
+    return static_cast<void *>(&Tag);
+  }
+
+  void Profile(llvm::FoldingSetNodeID &ID) const override {
+    ID.AddPointer(getTag());
+  }
+
+  PathDiagnosticPieceRef VisitNode(const ExplodedNode *N, BugReporterContext &BRC,
+                                   PathSensitiveBugReport &BR) override;
+};
+
+PathDiagnosticPieceRef
+ForConditionSuppressionBRVisitor::VisitNode(const ExplodedNode *N,
+    BugReporterContext &BRC, PathSensitiveBugReport &BR) {
+  // If there is just one successor, then there was no arbitrary assumption.
+  if (N->succ_size() < 2)
+    return nullptr;
+  ProgramPoint PP = N->getLocation();
+  if (auto BE = PP.getAs<BlockEdge>()) {
+    const Stmt *Term = BE->getSrc()->getTerminatorStmt();
+    if (const auto *Loop = dyn_cast_or_null<ForStmt>(Term)) {
+      if (const Expr *Cond = Loop->getCond()->IgnoreParenCasts()) {
+        SVal CondVal = N->getSVal(Cond);
+        for (SymbolRef CondSym : CondVal.symbols()) {
+          if (BR.isInteresting(CondSym)) {
+            BR.markInvalid(getTag(), nullptr);
+          }
+        }
+      }
+    }
+  }
+  return nullptr;
+}
 
 // NOTE: The `ArraySubscriptExpr` and `UnaryOperator` callbacks are `PostStmt`
 // instead of `PreStmt` because the current implementation passes the whole
@@ -698,6 +739,8 @@ void ArrayBoundCheckerV2::reportOOB(CheckerContext &C,
   markPartsInteresting(*BR, ErrorState, Offset, IsTaintBug);
   if (Extent)
     markPartsInteresting(*BR, ErrorState, *Extent, IsTaintBug);
+
+  BR->addVisitor<ForConditionSuppressionBRVisitor>();
 
   C.emitReport(std::move(BR));
 }
