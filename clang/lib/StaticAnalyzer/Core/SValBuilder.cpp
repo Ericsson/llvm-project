@@ -1103,5 +1103,8 @@ public:
 /// only. This behavior is uncertain and should be improved.
 SVal SValBuilder::evalCast(SVal V, QualType CastTy, QualType OriginalTy) {
   EvalCastVisitor TRV{*this, CastTy, OriginalTy};
-  return TRV.Visit(V);
+  SVal Res = TRV.Visit(V);
+  if (V.isFromSizeof())
+    Res.markFromSizeof();
+  return Res;
 }

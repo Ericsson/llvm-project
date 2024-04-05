@@ -855,6 +855,7 @@ VisitOffsetOfExpr(const OffsetOfExpr *OOE,
     assert(OOE->getType()->castAs<BuiltinType>()->isInteger());
     assert(IV.isSigned() == OOE->getType()->isSignedIntegerType());
     SVal X = svalBuilder.makeIntVal(IV);
+    X.markFromSizeof();
     B.generateNode(OOE, Pred,
                    Pred->getState()->BindExpr(OOE, Pred->getLocationContext(),
                                               X));
@@ -896,9 +897,9 @@ VisitUnaryExprOrTypeTraitExpr(const UnaryExprOrTypeTraitExpr *Ex,
     CharUnits amt = CharUnits::fromQuantity(Value.getZExtValue());
 
     ProgramStateRef state = N->getState();
-    state = state->BindExpr(
-        Ex, N->getLocationContext(),
-        svalBuilder.makeIntVal(amt.getQuantity(), Ex->getType()));
+    SVal X = svalBuilder.makeIntVal(amt.getQuantity(), Ex->getType());
+    X.markFromSizeof();
+    state = state->BindExpr( Ex, N->getLocationContext(), X);
     Bldr.generateNode(Ex, N, state);
   }
 

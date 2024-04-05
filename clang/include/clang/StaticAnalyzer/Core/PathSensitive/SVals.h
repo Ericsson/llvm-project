@@ -66,6 +66,7 @@ public:
 protected:
   const void *Data = nullptr;
   SValKind Kind = UndefinedValKind;
+  char IsFromSizeof = 0; // always 0 except for nonloc::ConcreteInt
 
   explicit SVal(SValKind Kind, const void *Data = nullptr)
       : Data(Data), Kind(Kind) {}
@@ -94,9 +95,10 @@ public:
   void Profile(llvm::FoldingSetNodeID &ID) const {
     ID.AddPointer(Data);
     ID.AddInteger(llvm::to_underlying(getKind()));
+    ID.AddInteger(IsFromSizeof);
   }
 
-  bool operator==(SVal R) const { return Kind == R.Kind && Data == R.Data; }
+  bool operator==(SVal R) const { return Kind == R.Kind && Data == R.Data && IsFromSizeof == R.IsFromSizeof; }
   bool operator!=(SVal R) const { return !(*this == R); }
 
   bool isUnknown() const { return getKind() == UnknownValKind; }
@@ -112,6 +114,10 @@ public:
   bool isConstant(int I) const;
 
   bool isZeroConstant() const;
+
+  bool isFromSizeof() const { return IsFromSizeof; }
+
+  void markFromSizeof() { IsFromSizeof = 1; }
 
   /// getAsFunctionDecl - If this SVal is a MemRegionVal and wraps a
   /// CodeTextRegion wrapping a FunctionDecl, return that FunctionDecl.

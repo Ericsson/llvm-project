@@ -61,6 +61,8 @@ class SimpleSValBuilder : public SValBuilder {
   // We traverse the symbol tree and query the constraint values for the
   // sub-trees and if a value is a constant we do the constant folding.
   SVal simplifySValOnce(ProgramStateRef State, SVal V);
+  SVal evalBinOpNNImpl(ProgramStateRef state, BinaryOperator::Opcode op,
+                   NonLoc lhs, NonLoc rhs, QualType resultTy);
 
 public:
   SimpleSValBuilder(llvm::BumpPtrAllocator &alloc, ASTContext &context,
@@ -419,6 +421,16 @@ static std::optional<NonLoc> tryRearrange(ProgramStateRef State,
 }
 
 SVal SimpleSValBuilder::evalBinOpNN(ProgramStateRef state,
+                                  BinaryOperator::Opcode op,
+                                  NonLoc lhs, NonLoc rhs,
+                                  QualType resultTy)  {
+  SVal Result = evalBinOpNNImpl(state, op, lhs, rhs, resultTy);
+  if (isa<NonLoc>(Result) && (lhs.isFromSizeof() || rhs.isFromSizeof()))
+    Result.markFromSizeof();
+  return Result;
+}
+
+SVal SimpleSValBuilder::evalBinOpNNImpl(ProgramStateRef state,
                                   BinaryOperator::Opcode op,
                                   NonLoc lhs, NonLoc rhs,
                                   QualType resultTy)  {

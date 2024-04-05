@@ -1040,6 +1040,10 @@ def ArrayBoundCheckerV2 : Checker<"ArrayBoundV2">,
   HelpText<"Warn about buffer overflows (newer checker)">,
   Documentation<HasDocumentation>;
 
+def BadScaledPointerArithmeticChecker : Checker<"BadScaledPointerArithmetic">,
+  HelpText<"Check for suspicious use of sizeof and offsetof in pointer arithmetic">,
+  Documentation<NotDocumented>;
+
 def ReturnPointerRangeChecker : Checker<"ReturnPtrRange">,
   HelpText<"Check for an out-of-bound pointer being returned to callers">,
   Documentation<HasDocumentation>;
