@@ -66,7 +66,7 @@ public:
 protected:
   const void *Data = nullptr;
   SValKind Kind = UndefinedValKind;
-  char IsFromSizeof = 0; // always 0 except for nonloc::ConcreteInt
+  char IsFromSizeof = 0; // may be 1 for NonLoc values, otherwise always zero
 
   explicit SVal(SValKind Kind, const void *Data = nullptr)
       : Data(Data), Kind(Kind) {}

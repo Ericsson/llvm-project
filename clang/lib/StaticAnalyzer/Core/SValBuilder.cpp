@@ -1104,7 +1104,7 @@ public:
 SVal SValBuilder::evalCast(SVal V, QualType CastTy, QualType OriginalTy) {
   EvalCastVisitor TRV{*this, CastTy, OriginalTy};
   SVal Res = TRV.Visit(V);
-  if (V.isFromSizeof())
+  if (V.isFromSizeof() && isa<NonLoc>(Res))
     Res.markFromSizeof();
   return Res;
 }
