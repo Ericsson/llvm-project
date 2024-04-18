@@ -19,7 +19,7 @@ void noncompliant_f1(void) {
   int *bptr = &buffer[0];
   int *ptr  = bptr;
   while ( ptr < bptr + sizeof(buffer) ) { // expected-warning {{calculated from a sizeof}}
-    *ptr++ = 0; // compliant  
+    *ptr++ = 0; // compliant
   }
 }
 void noncompliant_f1a(void) {
@@ -29,7 +29,7 @@ void noncompliant_f1a(void) {
   my_int_t *bptr = &buffer[0];
   my_int_t *ptr  = bptr;
   while ( ptr < bptr + sizeof(buffer) ) { // expected-warning {{calculated from a sizeof}}
-    *ptr++ = 0; // compliant  
+    *ptr++ = 0; // compliant
   }
 }
 void compliant_f1(void) {
@@ -38,14 +38,14 @@ void compliant_f1(void) {
   int *bptr = &buffer[0];
   int *ptr  = bptr;
   while ( ptr < bptr + bufsize ) { // compliant
-    *ptr++ = 0; // compliant  
+    *ptr++ = 0; // compliant
   }
 }
 
 void noncompliant_f2(void) {
   int buffer[bufsize];
   int *ptr = buffer;
-                                                           
+
   while ( ptr < buffer + sizeof(buffer) ) { // expected-warning {{calculated from a sizeof}}
     *ptr++ = 0; // compliant
   }
@@ -56,7 +56,7 @@ void compliant_f2(void) {
   int *ptr  = buffer;
 
   while ( ptr < buffer + bufsize ) { // compliant
-    *ptr++ = 0; // compliant  
+    *ptr++ = 0; // compliant
   }
 }
 
@@ -211,5 +211,3 @@ void compliant_f9(void) {
   int *ptr  = bptr + bufsize; // compliant
   int i = sizeof(ptr) - sizeof(*bptr); // compliant
 }
-
-           
