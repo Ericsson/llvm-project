@@ -2518,13 +2518,15 @@ void ExprEngine::processCFGBlockEntrance(const BlockEdge &L,
       return;
   }
 
+  const Stmt *Term = nodeBuilder.getContext().getBlock()->getTerminatorStmt();
+  const bool IsLoopingBack = isa_and_nonnull<ForStmt, WhileStmt, DoStmt, CXXForRangeStmt>(Term);
+
   // If this block is terminated by a loop and it has already been visited the
   // maximum number of times, widen the loop.
   unsigned int BlockCount = nodeBuilder.getContext().blockCount();
   if (BlockCount == AMgr.options.maxBlockVisitOnPath - 1 &&
       AMgr.options.ShouldWidenLoops) {
-    const Stmt *Term = nodeBuilder.getContext().getBlock()->getTerminatorStmt();
-    if (!isa_and_nonnull<ForStmt, WhileStmt, DoStmt, CXXForRangeStmt>(Term))
+    if (!IsLoopingBack)
       return;
     // Widen.
     const LocationContext *LCtx = Pred->getLocationContext();
@@ -2535,7 +2537,7 @@ void ExprEngine::processCFGBlockEntrance(const BlockEdge &L,
   }
 
   // FIXME: Refactor this into a checker.
-  if (BlockCount >= AMgr.options.maxBlockVisitOnPath) {
+  if (BlockCount >= AMgr.options.maxBlockVisitOnPath || (IsLoopingBack && BlockCount >= 3)) {
     static SimpleProgramPointTag tag(TagProviderName, "Block count exceeded");
     const ExplodedNode *Sink =
                    nodeBuilder.generateSink(Pred->getState(), Pred, &tag);
