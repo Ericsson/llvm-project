@@ -43,11 +43,15 @@ static const Expr *getLoopCondition(const Stmt *LoopStmt) {
 namespace clang {
 namespace ento {
 
+bool isLoopStmt(const Stmt *S) {
+  return isa_and_nonnull<ForStmt, WhileStmt, DoStmt, CXXForRangeStmt>(S);
+}
+
 ProgramStateRef getWidenedLoopState(ProgramStateRef PrevState,
                                     const LocationContext *LCtx,
                                     unsigned BlockCount, const Stmt *LoopStmt) {
 
-  assert((isa<ForStmt, WhileStmt, DoStmt, CXXForRangeStmt>(LoopStmt)));
+  assert(isLoopStmt(LoopStmt));
 
   // Invalidate values in the current state.
   // TODO Make this more conservative by only invalidating values that might

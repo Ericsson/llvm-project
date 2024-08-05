@@ -324,7 +324,8 @@ public:
                      ExplodedNode *Pred,
                      ExplodedNodeSet &Dst,
                      const CFGBlock *DstT,
-                     const CFGBlock *DstF);
+                     const CFGBlock *DstF,
+                     bool PreferTrue);
 
   /// Called by CoreEngine.
   /// Used to generate successor nodes for temporary destructors depending

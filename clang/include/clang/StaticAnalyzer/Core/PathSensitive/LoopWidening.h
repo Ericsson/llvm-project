@@ -21,6 +21,10 @@
 namespace clang {
 namespace ento {
 
+/// Return true if and only if S is a "normal" loop statement that is affected
+/// by the widening logic.
+bool isLoopStmt(const Stmt *S);
+
 /// Get the states that result from widening the loop.
 ///
 /// Widen the loop by invalidating anything that might be modified

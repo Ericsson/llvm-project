@@ -2529,10 +2529,9 @@ void ExprEngine::processCFGBlockEntrance(const BlockEdge &L,
   // If this block is terminated by a loop and it has already been visited the
   // maximum number of times, widen the loop.
   unsigned int BlockCount = nodeBuilder.getContext().blockCount();
-  if (BlockCount == AMgr.options.maxBlockVisitOnPath - 1 &&
-      AMgr.options.ShouldWidenLoops) {
+  if (BlockCount == 3) {
     const Stmt *Term = nodeBuilder.getContext().getBlock()->getTerminatorStmt();
-    if (!isa_and_nonnull<ForStmt, WhileStmt, DoStmt, CXXForRangeStmt>(Term))
+    if (!isLoopStmt(Term))
       return;
     // Widen.
     const LocationContext *LCtx = Pred->getLocationContext();
@@ -2759,7 +2758,8 @@ void ExprEngine::processBranch(const Stmt *Condition,
                                ExplodedNode *Pred,
                                ExplodedNodeSet &Dst,
                                const CFGBlock *DstT,
-                               const CFGBlock *DstF) {
+                               const CFGBlock *DstF,
+                               bool PreferTrue) {
   assert((!Condition || !isa<CXXBindTemporaryExpr>(Condition)) &&
          "CXXBindTemporaryExprs are handled by processBindTemporary.");
   const LocationContext *LCtx = Pred->getLocationContext();
@@ -2810,10 +2810,13 @@ void ExprEngine::processBranch(const Stmt *Condition,
 
     // Process the true branch.
     if (builder.isFeasible(true)) {
-      if (StTrue)
+      if (StTrue) {
         builder.generateNode(StTrue, true, PredN);
-      else
+        if (PreferTrue)
+          builder.markInfeasible(false);
+      } else {
         builder.markInfeasible(true);
+      }
     }
 
     // Process the false branch.

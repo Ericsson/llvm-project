@@ -25,6 +25,7 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExplodedGraph.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/FunctionSummary.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/LoopWidening.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/WorkList.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
@@ -444,7 +445,7 @@ void CoreEngine::HandleBranch(const Stmt *Cond, const Stmt *Term,
   NodeBuilderContext Ctx(*this, B, Pred);
   ExplodedNodeSet Dst;
   ExprEng.processBranch(Cond, Ctx, Pred, Dst, *(B->succ_begin()),
-                       *(B->succ_begin() + 1));
+                       *(B->succ_begin() + 1), isLoopStmt(Term));
   // Enqueue the new frontier onto the worklist.
   enqueue(Dst);
 }
