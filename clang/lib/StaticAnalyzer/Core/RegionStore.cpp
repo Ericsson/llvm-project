@@ -1384,6 +1384,16 @@ SVal RegionStoreManager::getBinding(RegionBindingsConstRef B, Loc L, QualType T)
   assert(!isa<UnknownVal>(L) && "location unknown");
   assert(!isa<UndefinedVal>(L) && "location undefined");
 
+  if (L == DebugLoc) {
+    llvm::errs() << "  getBinding:\n    L = ";
+    L.dump();
+    llvm::errs() << "\n    T = ";
+    T.dump();
+    llvm::errs() << "    B = ";
+    B.dump();
+    llvm::errs() << "\n";
+  }
+
   // For access to concrete addresses, return UnknownVal.  Checks
   // for null dereferences (and similar errors) are done by checkers, not
   // the Store.
@@ -1398,6 +1408,12 @@ SVal RegionStoreManager::getBinding(RegionBindingsConstRef B, Loc L, QualType T)
   }
 
   const MemRegion *MR = L.castAs<loc::MemRegionVal>().getRegion();
+  if (L == DebugLoc) {
+    llvm::errs() << "    MR = ";
+    MR->dump();
+    llvm::errs() << "\n";
+  }
+    
 
   if (isa<BlockDataRegion>(MR)) {
     return UnknownVal();
@@ -1414,14 +1430,28 @@ SVal RegionStoreManager::getBinding(RegionBindingsConstRef B, Loc L, QualType T)
   }
   assert(!T.isNull() && "Unable to auto-detect binding type!");
   assert(!T->isVoidType() && "Attempting to dereference a void pointer!");
-
+  
   if (!isa<TypedValueRegion>(MR))
     MR = GetElementZeroRegion(cast<SubRegion>(MR), T);
+
+  if (L == DebugLoc) {
+    llvm::errs() << "    (after type autodetection) T = ";
+    T.dump();
+
+    llvm::errs() << "    (after GetElementZeroRegion) MR = ";
+    MR->dump();
+    llvm::errs() << "\n";
+  }
 
   // FIXME: Perhaps this method should just take a 'const MemRegion*' argument
   //  instead of 'Loc', and have the other Loc cases handled at a higher level.
   const TypedValueRegion *R = cast<TypedValueRegion>(MR);
   QualType RTy = R->getValueType();
+
+  if (L == DebugLoc) {
+    llvm::errs() << "    RTy = ";
+    RTy.dump();
+  }
 
   // FIXME: we do not yet model the parts of a complex type, so treat the
   // whole thing as "unknown".

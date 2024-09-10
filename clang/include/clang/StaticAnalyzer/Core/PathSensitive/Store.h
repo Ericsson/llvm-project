@@ -64,6 +64,8 @@ protected:
 public:
   virtual ~StoreManager() = default;
 
+  std::optional<Loc> DebugLoc = std::nullopt;
+
   /// Return the value bound to specified location in a given state.
   /// \param[in] store The store in which to make the lookup.
   /// \param[in] loc The symbolic memory location.

@@ -2348,9 +2348,17 @@ public:
     // See if the expression we're interested refers to a variable.
     // If so, we can track both its contents and constraints on its value.
     if (ExplodedGraph::isInterestingLValueExpr(Inner)) {
+      llvm::errs() << "Inner = ";
+      Inner->dump();
       SVal LVal = LVNode->getSVal(Inner);
+      llvm::errs() << "LVal = ";
+      LVal.dump();
+      llvm::errs() << "\n";
 
       const MemRegion *RR = getLocationRegionIfReference(Inner, LVNode);
+      llvm::errs() << "RR = ";
+      if (RR) RR->dump(); else llvm::errs() << "(null)";
+      llvm::errs() << "\n";
       bool LVIsNull = LVState->isNull(LVal).isConstrainedTrue();
 
       // If this is a C++ reference to a null pointer, we are tracking the
@@ -2365,11 +2373,19 @@ public:
       // For those, we want to track the location of the reference.
       const MemRegion *R =
           (RR && LVIsNull) ? RR : LVNode->getSVal(Inner).getAsRegion();
+      llvm::errs() << "R = ";
+      if (R) R->dump(); else llvm::errs() << "(null)";
+      llvm::errs() << "\n";
 
       if (R) {
+        LVState->getStateManager().getStoreManager().DebugLoc = loc::MemRegionVal(R);
 
         // Mark both the variable region and its contents as interesting.
         SVal V = LVState->getRawSVal(loc::MemRegionVal(R));
+        LVState->getStateManager().getStoreManager().DebugLoc = std::nullopt;
+        llvm::errs() << "V = ";
+        V.dump();
+        llvm::errs() << "\n";
         Report.addVisitor<NoStoreFuncVisitor>(cast<SubRegion>(R), Opts.Kind);
 
         // When we got here, we do have something to track, and we will
