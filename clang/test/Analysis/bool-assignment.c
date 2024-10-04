@@ -111,3 +111,20 @@ void test_tainted_Boolean() {
   scanf("%d", &n);
   Boolean copy = n; // expected-warning {{Might assign a tainted non-Boolean value}}
 }
+
+
+// The following fragment is taken from unicode.c in the ruby source code and
+// it currently triggers a crash.
+
+typedef __typeof(sizeof(int)) size_t;
+struct rbimpl_size_mul_overflow_tag {
+    _Bool left;
+    size_t right;
+};
+struct rbimpl_size_mul_overflow_tag
+rbimpl_size_mul_overflow(size_t x, size_t y)
+    {
+    struct rbimpl_size_mul_overflow_tag ret = { 0, 0, };
+    ret.left = __builtin_mul_overflow(x, y, &ret.right);
+    return ret;
+}
