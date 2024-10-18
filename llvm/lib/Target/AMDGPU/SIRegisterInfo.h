@@ -14,6 +14,8 @@
 #ifndef LLVM_LIB_TARGET_AMDGPU_SIREGISTERINFO_H
 #define LLVM_LIB_TARGET_AMDGPU_SIREGISTERINFO_H
 
+#include "llvm/ADT/BitVector.h"
+
 #define GET_REGINFO_HEADER
 #include "AMDGPUGenRegisterInfo.inc"
 
@@ -80,6 +82,11 @@ public:
   /// spilling is needed.
   MCRegister reservedPrivateSegmentBufferReg(const MachineFunction &MF) const;
 
+  /// Return a pair of maximum numbers of VGPRs and AGPRs that meet the number
+  /// of waves per execution unit required for the function \p MF.
+  std::pair<unsigned, unsigned>
+  getMaxNumVectorRegs(const MachineFunction &MF) const;
+
   BitVector getReservedRegs(const MachineFunction &MF) const override;
   bool isAsmClobberable(const MachineFunction &MF,
                         MCRegister PhysReg) const override;
@@ -89,6 +96,11 @@ public:
   const uint32_t *getCallPreservedMask(const MachineFunction &MF,
                                        CallingConv::ID) const override;
   const uint32_t *getNoPreservedMask() const override;
+
+  // Functions with the amdgpu_cs_chain or amdgpu_cs_chain_preserve calling
+  // conventions are free to use certain VGPRs without saving and restoring any
+  // lanes (not even inactive ones).
+  static bool isChainScratchRegister(Register VGPR);
 
   // Stack access is very expensive. CSRs are also the high registers, and we
   // want to minimize the number of used registers.
@@ -198,6 +210,9 @@ public:
   }
 
   bool isSGPRReg(const MachineRegisterInfo &MRI, Register Reg) const;
+  bool isSGPRPhysReg(Register Reg) const {
+    return isSGPRClass(getPhysRegBaseClass(Reg));
+  }
 
   /// \returns true if this class contains only VGPR registers
   static bool isVGPRClass(const TargetRegisterClass *RC) {
@@ -442,6 +457,11 @@ public:
   // No check if the subreg is supported by the current RC is made.
   unsigned getSubRegAlignmentNumBits(const TargetRegisterClass *RC,
                                      unsigned SubReg) const;
+
+  // \returns a number of registers of a given \p RC used in a function.
+  // Does not go inside function calls.
+  unsigned getNumUsedPhysRegs(const MachineRegisterInfo &MRI,
+                              const TargetRegisterClass &RC) const;
 };
 
 namespace AMDGPU {

@@ -19,7 +19,6 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
-#include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugCounter.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -226,7 +225,8 @@ struct AssumeBuilderState {
       return nullptr;
     if (!DebugCounter::shouldExecute(BuildAssumeCounter))
       return nullptr;
-    Function *FnAssume = Intrinsic::getDeclaration(M, Intrinsic::assume);
+    Function *FnAssume =
+        Intrinsic::getOrInsertDeclaration(M, Intrinsic::assume);
     LLVMContext &C = M->getContext();
     SmallVector<OperandBundleDef, 8> OpBundle;
     for (auto &MapElem : AssumedKnowledgeMap) {
@@ -321,7 +321,7 @@ RetainedKnowledge llvm::simplifyRetainedKnowledge(AssumeInst *Assume,
                                                   AssumptionCache *AC,
                                                   DominatorTree *DT) {
   AssumeBuilderState Builder(Assume->getModule(), Assume, AC, DT);
-  RK = canonicalizedKnowledge(RK, Assume->getModule()->getDataLayout());
+  RK = canonicalizedKnowledge(RK, Assume->getDataLayout());
 
   if (!Builder.isKnowledgeWorthPreserving(RK))
     return RetainedKnowledge::none();
@@ -587,37 +587,3 @@ PreservedAnalyses AssumeBuilderPass::run(Function &F,
   PA.preserveSet<CFGAnalyses>();
   return PA;
 }
-
-namespace {
-class AssumeBuilderPassLegacyPass : public FunctionPass {
-public:
-  static char ID;
-
-  AssumeBuilderPassLegacyPass() : FunctionPass(ID) {
-    initializeAssumeBuilderPassLegacyPassPass(*PassRegistry::getPassRegistry());
-  }
-  bool runOnFunction(Function &F) override {
-    AssumptionCache &AC =
-        getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
-    DominatorTreeWrapperPass *DTWP =
-        getAnalysisIfAvailable<DominatorTreeWrapperPass>();
-    for (Instruction &I : instructions(F))
-      salvageKnowledge(&I, &AC, DTWP ? &DTWP->getDomTree() : nullptr);
-    return true;
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<AssumptionCacheTracker>();
-
-    AU.setPreservesAll();
-  }
-};
-} // namespace
-
-char AssumeBuilderPassLegacyPass::ID = 0;
-
-INITIALIZE_PASS_BEGIN(AssumeBuilderPassLegacyPass, "assume-builder",
-                      "Assume Builder", false, false)
-INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
-INITIALIZE_PASS_END(AssumeBuilderPassLegacyPass, "assume-builder",
-                    "Assume Builder", false, false)

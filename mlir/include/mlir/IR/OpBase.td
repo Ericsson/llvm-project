@@ -206,7 +206,9 @@ def AnyRegion : Region<CPred<"true">, "any region">;
 // A region with the given number of blocks.
 class SizedRegion<int numBlocks> : Region<
   CPred<"::llvm::hasNItems($_self, " # numBlocks # ")">,
-  "region with " # numBlocks # " blocks">;
+  "region with " # numBlocks # " blocks"> {
+  int blocks = numBlocks;
+}
 
 // A region with at least the given number of blocks.
 class MinSizedRegion<int numBlocks> : Region<
@@ -568,6 +570,14 @@ class TypesMatchWith<string summary, string lhsArg, string rhsArg,
   string transformer = transform;
 }
 
+// The same as TypesMatchWith but if either `lhsArg` or `rhsArg` are optional
+// and not present returns success.
+class OptionalTypesMatchWith<string summary, string lhsArg, string rhsArg,
+                     string transform, string comparator = "std::equal_to<>()">
+  : TypesMatchWith<summary, lhsArg, rhsArg, transform,
+     "!get" # snakeCaseToCamelCase<lhsArg>.ret # "()"
+     # " || !get" # snakeCaseToCamelCase<rhsArg>.ret # "() || " # comparator>;
+
 // Special variant of `TypesMatchWith` that provides a comparator suitable for
 // ranged arguments.
 class RangedTypesMatchWith<string summary, string lhsArg, string rhsArg,
@@ -661,17 +671,5 @@ class TCopVTEtAreSameAt<list<int> indices> : CPred<
       "::mlir::ArrayRef<unsigned>({" # !interleave(indices, ", ") # "}), "
       "[this](unsigned i) { return getElementTypeOrSelf(this->getOperand(i)); "
       "}))">;
-
-class AnyScalarTypeMatch<list<string> names> :
-    AnyMatchOperatorTrait<names, "$_self.getType().isSignlessInteger(1)",
-                          "scalar type">;
-
-class ScalarConditionOrMatchingShape<list<string> names> :
-    PredOpTrait<
-        !head(names) # " is scalar or has matching shape",
-        Or<[AnyScalarTypeMatch<[!head(names)]>.predicate,
-            AllShapesMatch<names>.predicate]>> {
-  list<string> values = names;
-}
 
 #endif // OP_BASE

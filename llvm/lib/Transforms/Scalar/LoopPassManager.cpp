@@ -293,7 +293,7 @@ PreservedAnalyses FunctionToLoopPassAdaptor::run(Function &F,
     Updater.CurrentL = L;
     Updater.SkipCurrentLoop = false;
 
-#ifndef NDEBUG
+#if LLVM_ENABLE_ABI_BREAKING_CHECKS
     // Save a parent loop pointer for asserts.
     Updater.ParentL = L->getParentLoop();
 #endif
@@ -313,7 +313,8 @@ PreservedAnalyses FunctionToLoopPassAdaptor::run(Function &F,
 
     if (LAR.MSSA && !PassPA.getChecker<MemorySSAAnalysis>().preserved())
       report_fatal_error("Loop pass manager using MemorySSA contains a pass "
-                         "that does not preserve MemorySSA");
+                         "that does not preserve MemorySSA",
+                         /*gen_crash_diag*/ false);
 
 #ifndef NDEBUG
     // LoopAnalysisResults should always be valid.

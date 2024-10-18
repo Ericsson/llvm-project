@@ -39,7 +39,7 @@ class EnumPropertyType<string typeName = ""> : PropertyType<typeName> {}
 /// Supports optional values by using the null representation.
 class RefPropertyType<string className> : PropertyType<className # "*"> {
   let PackOptional =
-    "value ? *value : nullptr";
+    "value.value_or(nullptr)";
   let UnpackOptional =
     "value ? std::optional<" # CXXName # ">(value) : std::nullopt";
 }
@@ -74,7 +74,7 @@ def APInt : PropertyType<"llvm::APInt"> { let PassByReference = 1; }
 def APSInt : PropertyType<"llvm::APSInt"> { let PassByReference = 1; }
 def APValue : PropertyType { let PassByReference = 1; }
 def APValueKind : EnumPropertyType<"APValue::ValueKind">;
-def ArraySizeModifier : EnumPropertyType<"ArrayType::ArraySizeModifier">;
+def ArraySizeModifier : EnumPropertyType<"ArraySizeModifier">;
 def AttrKind : EnumPropertyType<"attr::Kind">;
 def AutoTypeKeyword : EnumPropertyType;
 def Bool : PropertyType<"bool">;
@@ -117,6 +117,8 @@ def ExtParameterInfo : PropertyType<"FunctionProtoType::ExtParameterInfo">;
 def FixedPointSemantics : PropertyType<"llvm::FixedPointSemantics"> {
   let PassByReference = 1;
 }
+def FunctionEffect : PropertyType<"FunctionEffect">;
+def EffectConditionExpr : PropertyType<"EffectConditionExpr">;
 def Identifier : RefPropertyType<"IdentifierInfo"> { let ConstWhenWriting = 1; }
 def LValuePathEntry : PropertyType<"APValue::LValuePathEntry">;
 def LValuePathSerializationHelper :
@@ -142,7 +144,8 @@ def TypeOfKind : EnumPropertyType<"TypeOfKind">;
 def UInt32 : CountPropertyType<"uint32_t">;
 def UInt64 : CountPropertyType<"uint64_t">;
 def UnaryTypeTransformKind : EnumPropertyType<"UnaryTransformType::UTTKind">;
-def VectorKind : EnumPropertyType<"VectorType::VectorKind">;
+def VectorKind : EnumPropertyType<"VectorKind">;
+def TypeCoupledDeclRefInfo : PropertyType;
 
 def ExceptionSpecInfo : PropertyType<"FunctionProtoType::ExceptionSpecInfo"> {
   let BufferElementTypes = [ QualType ];
@@ -749,6 +752,23 @@ let Class = PropertyTypeCase<TemplateName, "SubstTemplateTemplateParmPack"> in {
     return ctx.getSubstTemplateTemplateParmPack(argumentPack, associatedDecl, index, final);
   }]>;
 }
+let Class = PropertyTypeCase<TemplateName, "DeducedTemplate"> in {
+  def : ReadHelper<[{
+    auto DTS = node.getAsDeducedTemplateName();
+  }]>;
+  def : Property<"underlying", TemplateName> {
+    let Read = [{ DTS->getUnderlying() }];
+  }
+  def : Property<"startPos", UInt32> {
+    let Read = [{ DTS->getDefaultArguments().StartPos }];
+  }
+  def : Property<"defaultArgs", Array<TemplateArgument>> {
+    let Read = [{ DTS->getDefaultArguments().Args }];
+  }
+  def : Creator<[{
+    return ctx.getDeducedTemplateName(underlying, {startPos, defaultArgs});
+  }]>;
+}
 
 // Type cases for TemplateArgument.
 def : PropertyTypeKind<TemplateArgument, TemplateArgumentKind,
@@ -806,6 +826,20 @@ let Class = PropertyTypeCase<TemplateArgument, "Integral"> in {
   }
   def : Creator<[{
     return TemplateArgument(ctx, value, type, isDefaulted);
+  }]>;
+}
+let Class = PropertyTypeCase<TemplateArgument, "StructuralValue"> in {
+  def : Property<"value", APValue> {
+    let Read = [{ node.getAsStructuralValue() }];
+  }
+  def : Property<"type", QualType> {
+    let Read = [{ node.getStructuralValueType() }];
+  }
+  def : Property<"isDefaulted", Bool> {
+    let Read = [{ node.getIsDefaulted() }];
+  }
+  def : Creator<[{
+    return TemplateArgument(ctx, type, value, isDefaulted);
   }]>;
 }
 let Class = PropertyTypeCase<TemplateArgument, "Template"> in {

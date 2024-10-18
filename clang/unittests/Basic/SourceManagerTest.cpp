@@ -20,11 +20,19 @@
 #include "clang/Lex/PreprocessorOptions.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Process.h"
 #include "gtest/gtest.h"
 #include <cstddef>
 
 using namespace clang;
+
+namespace clang {
+class SourceManagerTestHelper {
+public:
+  static FileID makeFileID(int ID) { return FileID::get(ID); }
+};
+} // namespace clang
 
 namespace {
 
@@ -397,7 +405,113 @@ TEST_F(SourceManagerTest, getLineNumber) {
   ASSERT_NO_FATAL_FAILURE(SourceMgr.getLineNumber(mainFileID, 1, nullptr));
 }
 
+struct FakeExternalSLocEntrySource : ExternalSLocEntrySource {
+  bool ReadSLocEntry(int ID) override { return {}; }
+  int getSLocEntryID(SourceLocation::UIntTy SLocOffset) override { return 0; }
+  std::pair<SourceLocation, StringRef> getModuleImportLoc(int ID) override {
+    return {};
+  }
+};
+
+TEST_F(SourceManagerTest, loadedSLocEntryIsInTheSameTranslationUnit) {
+  auto InSameTU = [=](int LID, int RID) {
+    return SourceMgr.isInTheSameTranslationUnitImpl(
+        std::make_pair(SourceManagerTestHelper::makeFileID(LID), 0),
+        std::make_pair(SourceManagerTestHelper::makeFileID(RID), 0));
+  };
+
+  FakeExternalSLocEntrySource ExternalSource;
+  SourceMgr.setExternalSLocEntrySource(&ExternalSource);
+
+  unsigned ANumFileIDs = 10;
+  auto [AFirstID, X] = SourceMgr.AllocateLoadedSLocEntries(ANumFileIDs, 10);
+  int ALastID = AFirstID + ANumFileIDs - 1;
+  // FileID(-11)..FileID(-2)
+  ASSERT_EQ(AFirstID, -11);
+  ASSERT_EQ(ALastID, -2);
+
+  unsigned BNumFileIDs = 20;
+  auto [BFirstID, Y] = SourceMgr.AllocateLoadedSLocEntries(BNumFileIDs, 20);
+  int BLastID = BFirstID + BNumFileIDs - 1;
+  // FileID(-31)..FileID(-12)
+  ASSERT_EQ(BFirstID, -31);
+  ASSERT_EQ(BLastID, -12);
+
+  // Loaded vs local.
+  EXPECT_FALSE(InSameTU(-2, 1));
+
+  // Loaded in the same allocation A.
+  EXPECT_TRUE(InSameTU(-11, -2));
+  EXPECT_TRUE(InSameTU(-11, -6));
+
+  // Loaded in the same allocation B.
+  EXPECT_TRUE(InSameTU(-31, -12));
+  EXPECT_TRUE(InSameTU(-31, -16));
+
+  // Loaded from different allocations A and B.
+  EXPECT_FALSE(InSameTU(-12, -11));
+}
+
 #if defined(LLVM_ON_UNIX)
+
+// A single SourceManager instance is sometimes reused across multiple
+// compilations. This test makes sure we're resetting caches built for tracking
+// include locations that are based on FileIDs, to make sure we don't report
+// wrong include locations when FileIDs coincide between two different runs.
+TEST_F(SourceManagerTest, ResetsIncludeLocMap) {
+  auto ParseFile = [&] {
+    TrivialModuleLoader ModLoader;
+    HeaderSearch HeaderInfo(std::make_shared<HeaderSearchOptions>(), SourceMgr,
+                            Diags, LangOpts, &*Target);
+    Preprocessor PP(std::make_shared<PreprocessorOptions>(), Diags, LangOpts,
+                    SourceMgr, HeaderInfo, ModLoader,
+                    /*IILookup =*/nullptr,
+                    /*OwnsHeaderSearch =*/false);
+    PP.Initialize(*Target);
+    PP.EnterMainSourceFile();
+    PP.LexTokensUntilEOF();
+    EXPECT_FALSE(Diags.hasErrorOccurred());
+  };
+
+  auto Buf = llvm::MemoryBuffer::getMemBuffer("");
+  FileEntryRef HeaderFile =
+      FileMgr.getVirtualFileRef("/foo.h", Buf->getBufferSize(), 0);
+  SourceMgr.overrideFileContents(HeaderFile, std::move(Buf));
+
+  Buf = llvm::MemoryBuffer::getMemBuffer(R"cpp(#include "/foo.h")cpp");
+  FileEntryRef BarFile =
+      FileMgr.getVirtualFileRef("/bar.h", Buf->getBufferSize(), 0);
+  SourceMgr.overrideFileContents(BarFile, std::move(Buf));
+  SourceMgr.createFileID(BarFile, {}, clang::SrcMgr::C_User);
+
+  Buf = llvm::MemoryBuffer::getMemBuffer(R"cpp(#include "/foo.h")cpp");
+  FileID MFID = SourceMgr.createFileID(std::move(Buf));
+  SourceMgr.setMainFileID(MFID);
+
+  ParseFile();
+  auto FooFID = SourceMgr.getOrCreateFileID(HeaderFile, clang::SrcMgr::C_User);
+  auto IncFID = SourceMgr.getDecomposedIncludedLoc(FooFID).first;
+  EXPECT_EQ(IncFID, MFID);
+
+  // Clean up source-manager state before we start next parse.
+  SourceMgr.clearIDTables();
+
+  // Set up a new main file.
+  Buf = llvm::MemoryBuffer::getMemBuffer(R"cpp(
+  // silly comment 42
+  #include "/bar.h")cpp");
+  MFID = SourceMgr.createFileID(std::move(Buf));
+  SourceMgr.setMainFileID(MFID);
+
+  ParseFile();
+  // Make sure foo.h got the same file-id in both runs.
+  EXPECT_EQ(FooFID,
+            SourceMgr.getOrCreateFileID(HeaderFile, clang::SrcMgr::C_User));
+  auto BarFID = SourceMgr.getOrCreateFileID(BarFile, clang::SrcMgr::C_User);
+  IncFID = SourceMgr.getDecomposedIncludedLoc(FooFID).first;
+  // Check that includer is bar.h during this run.
+  EXPECT_EQ(IncFID, BarFID);
+}
 
 TEST_F(SourceManagerTest, getMacroArgExpandedLocation) {
   const char *header =
@@ -435,7 +549,7 @@ TEST_F(SourceManagerTest, getMacroArgExpandedLocation) {
   // These are different than normal includes since predefines buffer doesn't
   // have a valid insertion location.
   PP.setPredefines("#include \"/implicit-header.h\"");
-  FileMgr.getVirtualFile("/implicit-header.h", 0, 0);
+  FileMgr.getVirtualFileRef("/implicit-header.h", 0, 0);
   PP.Initialize(*Target);
   PP.EnterMainSourceFile();
 
@@ -476,6 +590,7 @@ struct MacroAction {
 
   SourceLocation Loc;
   std::string Name;
+  LLVM_PREFERRED_TYPE(Kind)
   unsigned MAKind : 3;
 
   MacroAction(SourceLocation Loc, StringRef Name, unsigned K)

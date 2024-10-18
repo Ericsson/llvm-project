@@ -15,7 +15,6 @@
 
 // UNSUPPORTED: no-threads
 // UNSUPPORTED: no-exceptions
-// UNSUPPORTED: libcpp-has-no-experimental-stop_token
 // UNSUPPORTED: c++03, c++11, c++14, c++17
 // XFAIL: availability-synchronization_library-missing
 
@@ -31,6 +30,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "make_test_thread.h"
 #include "test_macros.h"
 
 int main(int, char**) {
@@ -40,12 +40,12 @@ int main(int, char**) {
     std::atomic_bool start = false;
     std::atomic_bool done  = false;
 
-    std::jthread jt{[&] {
+    std::jthread jt = support::make_test_jthread([&] {
       start.wait(false);
       f();
       done = true;
       done.notify_all();
-    }};
+    });
 
     f = [&] {
       try {

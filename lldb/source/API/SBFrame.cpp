@@ -45,6 +45,7 @@
 #include "lldb/API/SBAddress.h"
 #include "lldb/API/SBDebugger.h"
 #include "lldb/API/SBExpressionOptions.h"
+#include "lldb/API/SBFormat.h"
 #include "lldb/API/SBStream.h"
 #include "lldb/API/SBSymbolContext.h"
 #include "lldb/API/SBThread.h"
@@ -808,7 +809,7 @@ SBValueList SBFrame::GetVariables(const lldb::SBVariablesOptions &options) {
         Status var_error;
         variable_list = frame->GetVariableList(true, &var_error);
         if (var_error.Fail())
-          value_list.SetError(var_error);
+          value_list.SetError(std::move(var_error));
         if (variable_list) {
           const size_t num_variables = variable_list->GetSize();
           if (num_variables) {
@@ -947,6 +948,40 @@ SBValue SBFrame::FindRegister(const char *name) {
   return result;
 }
 
+SBError SBFrame::GetDescriptionWithFormat(const SBFormat &format,
+                                          SBStream &output) {
+  Stream &strm = output.ref();
+
+  std::unique_lock<std::recursive_mutex> lock;
+  ExecutionContext exe_ctx(m_opaque_sp.get(), lock);
+
+  StackFrame *frame = nullptr;
+  Target *target = exe_ctx.GetTargetPtr();
+  Process *process = exe_ctx.GetProcessPtr();
+  SBError error;
+
+  if (!format) {
+    error.SetErrorString("The provided SBFormat object is invalid");
+    return error;
+  }
+
+  if (target && process) {
+    Process::StopLocker stop_locker;
+    if (stop_locker.TryLock(&process->GetRunLock())) {
+      frame = exe_ctx.GetFramePtr();
+      if (frame &&
+          frame->DumpUsingFormat(strm, format.GetFormatEntrySP().get())) {
+        return error;
+      }
+    }
+  }
+  error.SetErrorStringWithFormat(
+      "It was not possible to generate a frame "
+      "description with the given format string '%s'",
+      format.GetFormatEntrySP()->string.c_str());
+  return error;
+}
+
 bool SBFrame::GetDescription(SBStream &description) {
   LLDB_INSTRUMENT_VA(this, description);
 
@@ -989,16 +1024,17 @@ SBValue SBFrame::EvaluateExpression(const char *expr) {
     options.SetFetchDynamicValue(fetch_dynamic_value);
     options.SetUnwindOnError(true);
     options.SetIgnoreBreakpoints(true);
-    if (target->GetLanguage() != eLanguageTypeUnknown)
-      options.SetLanguage(target->GetLanguage());
-    else
-      options.SetLanguage(frame->GetLanguage());
+    SourceLanguage language = target->GetLanguage();
+    if (!language)
+      language = frame->GetLanguage();
+    options.SetLanguage((SBSourceLanguageName)language.name, language.version);
     return EvaluateExpression(expr, options);
   } else {
     Status error;
-    error.SetErrorString("can't evaluate expressions when the "
-                           "process is running.");
-    ValueObjectSP error_val_sp = ValueObjectConstResult::Create(nullptr, error);
+    error = Status::FromErrorString("can't evaluate expressions when the "
+                                    "process is running.");
+    ValueObjectSP error_val_sp =
+        ValueObjectConstResult::Create(nullptr, std::move(error));
     result.SetSP(error_val_sp, false);
   }
   return result;
@@ -1018,10 +1054,12 @@ SBFrame::EvaluateExpression(const char *expr,
 
   StackFrame *frame = exe_ctx.GetFramePtr();
   Target *target = exe_ctx.GetTargetPtr();
-  if (target && target->GetLanguage() != eLanguageTypeUnknown)
-    options.SetLanguage(target->GetLanguage());
-  else if (frame)
-    options.SetLanguage(frame->GetLanguage());
+  SourceLanguage language;
+  if (target)
+    language = target->GetLanguage();
+  if (!language && frame)
+    language = frame->GetLanguage();
+  options.SetLanguage((SBSourceLanguageName)language.name, language.version);
   return EvaluateExpression(expr, options);
 }
 
@@ -1039,10 +1077,12 @@ SBValue SBFrame::EvaluateExpression(const char *expr,
   options.SetIgnoreBreakpoints(true);
   StackFrame *frame = exe_ctx.GetFramePtr();
   Target *target = exe_ctx.GetTargetPtr();
-  if (target && target->GetLanguage() != eLanguageTypeUnknown)
-    options.SetLanguage(target->GetLanguage());
-  else if (frame)
-    options.SetLanguage(frame->GetLanguage());
+  SourceLanguage language;
+  if (target)
+    language = target->GetLanguage();
+  if (!language && frame)
+    language = frame->GetLanguage();
+  options.SetLanguage((SBSourceLanguageName)language.name, language.version);
   return EvaluateExpression(expr, options);
 }
 
@@ -1088,15 +1128,15 @@ lldb::SBValue SBFrame::EvaluateExpression(const char *expr,
       }
     } else {
       Status error;
-      error.SetErrorString("can't evaluate expressions when the "
-                           "process is running.");
-      expr_value_sp = ValueObjectConstResult::Create(nullptr, error);
+      error = Status::FromErrorString("can't evaluate expressions when the "
+                                      "process is running.");
+      expr_value_sp = ValueObjectConstResult::Create(nullptr, std::move(error));
       expr_result.SetSP(expr_value_sp, false);
     }
   } else {
       Status error;
-      error.SetErrorString("sbframe object is not valid.");
-      expr_value_sp = ValueObjectConstResult::Create(nullptr, error);
+      error = Status::FromErrorString("sbframe object is not valid.");
+      expr_value_sp = ValueObjectConstResult::Create(nullptr, std::move(error));
       expr_result.SetSP(expr_value_sp, false);
   }
 
@@ -1156,9 +1196,20 @@ bool SBFrame::IsArtificial() const {
   std::unique_lock<std::recursive_mutex> lock;
   ExecutionContext exe_ctx(m_opaque_sp.get(), lock);
 
-  StackFrame *frame = exe_ctx.GetFramePtr();
-  if (frame)
+  if (StackFrame *frame = exe_ctx.GetFramePtr())
     return frame->IsArtificial();
+
+  return false;
+}
+
+bool SBFrame::IsHidden() const {
+  LLDB_INSTRUMENT_VA(this);
+
+  std::unique_lock<std::recursive_mutex> lock;
+  ExecutionContext exe_ctx(m_opaque_sp.get(), lock);
+
+  if (StackFrame *frame = exe_ctx.GetFramePtr())
+    return frame->IsHidden();
 
   return false;
 }
@@ -1183,7 +1234,7 @@ lldb::LanguageType SBFrame::GuessLanguage() const {
     if (stop_locker.TryLock(&process->GetRunLock())) {
       frame = exe_ctx.GetFramePtr();
       if (frame) {
-        return frame->GuessLanguage();
+        return frame->GuessLanguage().AsLanguageType();
       }
     }
   }

@@ -24,8 +24,10 @@
 //   * extents_type::index-cast(i) is a multidimensional index in extents_.
 
 #include <mdspan>
+#include <type_traits>
 #include <cassert>
 #include <cstdint>
+#include <span> // dynamic_extent
 
 #include "test_macros.h"
 
@@ -80,7 +82,7 @@ constexpr bool test() {
   test_iteration<std::extents<unsigned, D>>(7);
   test_iteration<std::extents<unsigned, 7>>();
   test_iteration<std::extents<unsigned, 7, 8>>();
-  test_iteration<std::extents<char, D, D, D, D>>(1, 1, 1, 1);
+  test_iteration<std::extents<signed char, D, D, D, D>>(1, 1, 1, 1);
 
   // Check operator constraint for number of arguments
   static_assert(check_operator_constraints(std::layout_left::mapping<std::extents<int, D>>(std::extents<int, D>(1)), 0));

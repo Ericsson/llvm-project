@@ -56,7 +56,6 @@ public:
 
   void finalizeContents() override {
     writeBody();
-    bodyOutputStream.flush();
     createHeader(body.size());
   }
 
@@ -373,7 +372,11 @@ public:
   NameSection(ArrayRef<OutputSegment *> segments)
       : SyntheticSection(llvm::wasm::WASM_SEC_CUSTOM, "name"),
         segments(segments) {}
-  bool isNeeded() const override { return !config->stripAll && numNames() > 0; }
+  bool isNeeded() const override {
+    if (config->stripAll && !config->keepSections.count(name))
+      return false;
+    return numNames() > 0;
+  }
   void writeBody() override;
   unsigned numNames() const {
     // We always write at least one name which is the name of the
@@ -393,7 +396,9 @@ public:
   ProducersSection()
       : SyntheticSection(llvm::wasm::WASM_SEC_CUSTOM, "producers") {}
   bool isNeeded() const override {
-    return !config->stripAll && fieldCount() > 0;
+    if (config->stripAll && !config->keepSections.count(name))
+      return false;
+    return fieldCount() > 0;
   }
   void writeBody() override;
   void addInfo(const llvm::wasm::WasmProducerInfo &info);
@@ -412,7 +417,9 @@ public:
   TargetFeaturesSection()
       : SyntheticSection(llvm::wasm::WASM_SEC_CUSTOM, "target_features") {}
   bool isNeeded() const override {
-    return !config->stripAll && features.size() > 0;
+    if (config->stripAll && !config->keepSections.count(name))
+      return false;
+    return features.size() > 0;
   }
   void writeBody() override;
 

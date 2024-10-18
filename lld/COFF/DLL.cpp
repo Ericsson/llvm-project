@@ -110,7 +110,7 @@ private:
 // A chunk for the import descriptor table.
 class ImportDirectoryChunk : public NonSectionChunk {
 public:
-  explicit ImportDirectoryChunk(Chunk *n) : dllName(n) {}
+  explicit ImportDirectoryChunk(Chunk *n) : dllName(n) { setAlignment(4); }
   size_t getSize() const override { return sizeof(ImportDirectoryTableEntry); }
 
   void writeTo(uint8_t *buf) const override {
@@ -142,6 +142,30 @@ private:
   size_t size;
 };
 
+// A chunk for ARM64EC auxiliary IAT.
+class AuxImportChunk : public NonSectionChunk {
+public:
+  explicit AuxImportChunk(ImportFile *file) : file(file) {
+    setAlignment(sizeof(uint64_t));
+  }
+  size_t getSize() const override { return sizeof(uint64_t); }
+
+  void writeTo(uint8_t *buf) const override {
+    uint64_t impchkVA = 0;
+    if (file->impchkThunk)
+      impchkVA = file->impchkThunk->getRVA() + file->ctx.config.imageBase;
+    write64le(buf, impchkVA);
+  }
+
+  void getBaserels(std::vector<Baserel> *res) override {
+    if (file->impchkThunk)
+      res->emplace_back(rva, file->ctx.config.machine);
+  }
+
+private:
+  ImportFile *file;
+};
+
 static std::vector<std::vector<DefinedImportData *>>
 binImports(COFFLinkerContext &ctx,
            const std::vector<DefinedImportData *> &imports) {
@@ -160,7 +184,15 @@ binImports(COFFLinkerContext &ctx,
     // Sort symbols by name for each group.
     std::vector<DefinedImportData *> &syms = kv.second;
     llvm::sort(syms, [](DefinedImportData *a, DefinedImportData *b) {
-      return a->getName() < b->getName();
+      auto getBaseName = [](DefinedImportData *sym) {
+        StringRef name = sym->getName();
+        name.consume_front("__imp_");
+        // Skip aux_ part of ARM64EC function symbol name.
+        if (sym->file->impchkThunk)
+          name.consume_front("aux_");
+        return name;
+      };
+      return getBaseName(a) < getBaseName(b);
     });
     v.push_back(std::move(syms));
   }
@@ -172,7 +204,7 @@ binImports(COFFLinkerContext &ctx,
 // A chunk for the delay import descriptor table etnry.
 class DelayDirectoryChunk : public NonSectionChunk {
 public:
-  explicit DelayDirectoryChunk(Chunk *n) : dllName(n) {}
+  explicit DelayDirectoryChunk(Chunk *n) : dllName(n) { setAlignment(4); }
 
   size_t getSize() const override {
     return sizeof(delay_import_directory_table_entry);
@@ -313,11 +345,12 @@ static const uint8_t tailMergeARM64[] = {
 };
 
 // A chunk for the delay import thunk.
-class ThunkChunkX64 : public NonSectionChunk {
+class ThunkChunkX64 : public NonSectionCodeChunk {
 public:
   ThunkChunkX64(Defined *i, Chunk *tm) : imp(i), tailMerge(tm) {}
 
   size_t getSize() const override { return sizeof(thunkX64); }
+  MachineTypes getMachine() const override { return AMD64; }
 
   void writeTo(uint8_t *buf) const override {
     memcpy(buf, thunkX64, sizeof(thunkX64));
@@ -329,11 +362,12 @@ public:
   Chunk *tailMerge = nullptr;
 };
 
-class TailMergeChunkX64 : public NonSectionChunk {
+class TailMergeChunkX64 : public NonSectionCodeChunk {
 public:
   TailMergeChunkX64(Chunk *d, Defined *h) : desc(d), helper(h) {}
 
   size_t getSize() const override { return sizeof(tailMergeX64); }
+  MachineTypes getMachine() const override { return AMD64; }
 
   void writeTo(uint8_t *buf) const override {
     memcpy(buf, tailMergeX64, sizeof(tailMergeX64));
@@ -380,12 +414,13 @@ public:
   }
 };
 
-class ThunkChunkX86 : public NonSectionChunk {
+class ThunkChunkX86 : public NonSectionCodeChunk {
 public:
   ThunkChunkX86(COFFLinkerContext &ctx, Defined *i, Chunk *tm)
       : imp(i), tailMerge(tm), ctx(ctx) {}
 
   size_t getSize() const override { return sizeof(thunkX86); }
+  MachineTypes getMachine() const override { return I386; }
 
   void writeTo(uint8_t *buf) const override {
     memcpy(buf, thunkX86, sizeof(thunkX86));
@@ -404,12 +439,13 @@ private:
   const COFFLinkerContext &ctx;
 };
 
-class TailMergeChunkX86 : public NonSectionChunk {
+class TailMergeChunkX86 : public NonSectionCodeChunk {
 public:
   TailMergeChunkX86(COFFLinkerContext &ctx, Chunk *d, Defined *h)
       : desc(d), helper(h), ctx(ctx) {}
 
   size_t getSize() const override { return sizeof(tailMergeX86); }
+  MachineTypes getMachine() const override { return I386; }
 
   void writeTo(uint8_t *buf) const override {
     memcpy(buf, tailMergeX86, sizeof(tailMergeX86));
@@ -428,7 +464,7 @@ private:
   const COFFLinkerContext &ctx;
 };
 
-class ThunkChunkARM : public NonSectionChunk {
+class ThunkChunkARM : public NonSectionCodeChunk {
 public:
   ThunkChunkARM(COFFLinkerContext &ctx, Defined *i, Chunk *tm)
       : imp(i), tailMerge(tm), ctx(ctx) {
@@ -436,6 +472,7 @@ public:
   }
 
   size_t getSize() const override { return sizeof(thunkARM); }
+  MachineTypes getMachine() const override { return ARMNT; }
 
   void writeTo(uint8_t *buf) const override {
     memcpy(buf, thunkARM, sizeof(thunkARM));
@@ -454,7 +491,7 @@ private:
   const COFFLinkerContext &ctx;
 };
 
-class TailMergeChunkARM : public NonSectionChunk {
+class TailMergeChunkARM : public NonSectionCodeChunk {
 public:
   TailMergeChunkARM(COFFLinkerContext &ctx, Chunk *d, Defined *h)
       : desc(d), helper(h), ctx(ctx) {
@@ -462,6 +499,7 @@ public:
   }
 
   size_t getSize() const override { return sizeof(tailMergeARM); }
+  MachineTypes getMachine() const override { return ARMNT; }
 
   void writeTo(uint8_t *buf) const override {
     memcpy(buf, tailMergeARM, sizeof(tailMergeARM));
@@ -480,13 +518,14 @@ private:
   const COFFLinkerContext &ctx;
 };
 
-class ThunkChunkARM64 : public NonSectionChunk {
+class ThunkChunkARM64 : public NonSectionCodeChunk {
 public:
   ThunkChunkARM64(Defined *i, Chunk *tm) : imp(i), tailMerge(tm) {
     setAlignment(4);
   }
 
   size_t getSize() const override { return sizeof(thunkARM64); }
+  MachineTypes getMachine() const override { return ARM64; }
 
   void writeTo(uint8_t *buf) const override {
     memcpy(buf, thunkARM64, sizeof(thunkARM64));
@@ -499,13 +538,14 @@ public:
   Chunk *tailMerge = nullptr;
 };
 
-class TailMergeChunkARM64 : public NonSectionChunk {
+class TailMergeChunkARM64 : public NonSectionCodeChunk {
 public:
   TailMergeChunkARM64(Chunk *d, Defined *h) : desc(d), helper(h) {
     setAlignment(4);
   }
 
   size_t getSize() const override { return sizeof(tailMergeARM64); }
+  MachineTypes getMachine() const override { return ARM64; }
 
   void writeTo(uint8_t *buf) const override {
     memcpy(buf, tailMergeARM64, sizeof(tailMergeARM64));
@@ -679,16 +719,30 @@ void IdataContents::create(COFFLinkerContext &ctx) {
       if (s->getExternalName().empty()) {
         lookups.push_back(make<OrdinalOnlyChunk>(ctx, ord));
         addresses.push_back(make<OrdinalOnlyChunk>(ctx, ord));
-        continue;
+      } else {
+        auto *c = make<HintNameChunk>(s->getExternalName(), ord);
+        lookups.push_back(make<LookupChunk>(ctx, c));
+        addresses.push_back(make<LookupChunk>(ctx, c));
+        hints.push_back(c);
       }
-      auto *c = make<HintNameChunk>(s->getExternalName(), ord);
-      lookups.push_back(make<LookupChunk>(ctx, c));
-      addresses.push_back(make<LookupChunk>(ctx, c));
-      hints.push_back(c);
+
+      if (s->file->impECSym) {
+        auto chunk = make<AuxImportChunk>(s->file);
+        auxIat.push_back(chunk);
+        s->file->impECSym->setLocation(chunk);
+
+        chunk = make<AuxImportChunk>(s->file);
+        auxIatCopy.push_back(chunk);
+        s->file->auxImpCopySym->setLocation(chunk);
+      }
     }
     // Terminate with null values.
     lookups.push_back(make<NullChunk>(ctx.config.wordsize));
     addresses.push_back(make<NullChunk>(ctx.config.wordsize));
+    if (ctx.config.machine == ARM64EC) {
+      auxIat.push_back(make<NullChunk>(ctx.config.wordsize));
+      auxIatCopy.push_back(make<NullChunk>(ctx.config.wordsize));
+    }
 
     for (int i = 0, e = syms.size(); i < e; ++i)
       syms[i]->setLocation(addresses[base + i]);
@@ -758,6 +812,16 @@ void DelayLoadContents::create(Defined *h) {
         s->loadThunkSym =
             cast<DefinedSynthetic>(ctx.symtab.addSynthetic(symName, t));
       }
+
+      if (s->file->impECSym) {
+        auto chunk = make<AuxImportChunk>(s->file);
+        auxIat.push_back(chunk);
+        s->file->impECSym->setLocation(chunk);
+
+        chunk = make<AuxImportChunk>(s->file);
+        auxIatCopy.push_back(chunk);
+        s->file->auxImpCopySym->setLocation(chunk);
+      }
     }
     thunks.push_back(tm);
     if (pdataChunk)
@@ -768,6 +832,10 @@ void DelayLoadContents::create(Defined *h) {
     // Terminate with null values.
     addresses.push_back(make<NullChunk>(8));
     names.push_back(make<NullChunk>(8));
+    if (ctx.config.machine == ARM64EC) {
+      auxIat.push_back(make<NullChunk>(8));
+      auxIatCopy.push_back(make<NullChunk>(8));
+    }
 
     for (int i = 0, e = syms.size(); i < e; ++i)
       syms[i]->setLocation(addresses[base + i]);
@@ -791,6 +859,7 @@ void DelayLoadContents::create(Defined *h) {
 Chunk *DelayLoadContents::newTailMergeChunk(Chunk *dir) {
   switch (ctx.config.machine) {
   case AMD64:
+  case ARM64EC:
     return make<TailMergeChunkX64>(dir, helper);
   case I386:
     return make<TailMergeChunkX86>(ctx, dir, helper);
@@ -826,6 +895,7 @@ Chunk *DelayLoadContents::newThunkChunk(DefinedImportData *s,
                                         Chunk *tailMerge) {
   switch (ctx.config.machine) {
   case AMD64:
+  case ARM64EC:
     return make<ThunkChunkX64>(s, tailMerge);
   case I386:
     return make<ThunkChunkX86>(ctx, s, tailMerge);

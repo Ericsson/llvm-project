@@ -274,8 +274,8 @@ public:
   /// Create a remapper from the given remapping file. The remapper will
   /// be used for profile read in by Reader.
   static ErrorOr<std::unique_ptr<SampleProfileReaderItaniumRemapper>>
-  create(const std::string Filename, vfs::FileSystem &FS,
-         SampleProfileReader &Reader, LLVMContext &C);
+  create(StringRef Filename, vfs::FileSystem &FS, SampleProfileReader &Reader,
+         LLVMContext &C);
 
   /// Create a remapper from the given Buffer. The remapper will
   /// be used for profile read in by Reader.
@@ -380,6 +380,17 @@ public:
     return sampleprof_error::success;
   }
 
+  /// Read sample profiles for the given functions.
+  std::error_code read(const DenseSet<StringRef> &FuncsToUse) {
+    DenseSet<StringRef> S;
+    for (StringRef F : FuncsToUse)
+      if (Profiles.find(FunctionId(F)) == Profiles.end())
+        S.insert(F);
+    if (std::error_code EC = read(S, Profiles))
+      return EC;
+    return sampleprof_error::success;
+  }
+
   /// The implementaion to read sample profiles from the associated file.
   virtual std::error_code readImpl() = 0;
 
@@ -409,13 +420,23 @@ public:
 
   /// Return the samples collected for function \p F.
   FunctionSamples *getSamplesFor(StringRef Fname) {
-    auto It = Profiles.find(Fname);
+    auto It = Profiles.find(FunctionId(Fname));
     if (It != Profiles.end())
       return &It->second;
 
+    if (FuncNameToProfNameMap && !FuncNameToProfNameMap->empty()) {
+      auto R = FuncNameToProfNameMap->find(FunctionId(Fname));
+      if (R != FuncNameToProfNameMap->end()) {
+        Fname = R->second.stringRef();
+        auto It = Profiles.find(FunctionId(Fname));
+        if (It != Profiles.end())
+          return &It->second;
+      }
+    }
+
     if (Remapper) {
       if (auto NameInProfile = Remapper->lookUpNameInProfile(Fname)) {
-        auto It = Profiles.find(*NameInProfile);
+        auto It = Profiles.find(FunctionId(*NameInProfile));
         if (It != Profiles.end())
           return &It->second;
       }
@@ -436,9 +457,9 @@ public:
   /// Create a remapper underlying if RemapFilename is not empty.
   /// Parameter P specifies the FSDiscriminatorPass.
   static ErrorOr<std::unique_ptr<SampleProfileReader>>
-  create(const std::string Filename, LLVMContext &C, vfs::FileSystem &FS,
+  create(StringRef Filename, LLVMContext &C, vfs::FileSystem &FS,
          FSDiscriminatorPass P = FSDiscriminatorPass::Base,
-         const std::string RemapFilename = "");
+         StringRef RemapFilename = "");
 
   /// Create a sample profile reader from the supplied memory buffer.
   /// Create a remapper underlying if RemapFilename is not empty.
@@ -446,10 +467,10 @@ public:
   static ErrorOr<std::unique_ptr<SampleProfileReader>>
   create(std::unique_ptr<MemoryBuffer> &B, LLVMContext &C, vfs::FileSystem &FS,
          FSDiscriminatorPass P = FSDiscriminatorPass::Base,
-         const std::string RemapFilename = "");
+         StringRef RemapFilename = "");
 
   /// Return the profile summary.
-  ProfileSummary &getSummary() const { return *(Summary.get()); }
+  ProfileSummary &getSummary() const { return *Summary; }
 
   MemoryBuffer *getBuffer() const { return Buffer.get(); }
 
@@ -474,7 +495,7 @@ public:
 
   /// It includes all the names that have samples either in outline instance
   /// or inline instance.
-  virtual std::vector<StringRef> *getNameTable() { return nullptr; }
+  virtual std::vector<FunctionId> *getNameTable() { return nullptr; }
   virtual bool dumpSectionInfo(raw_ostream &OS = dbgs()) { return false; };
 
   /// Return whether names in the profile are all MD5 numbers.
@@ -484,15 +505,20 @@ public:
   /// are present.
   virtual void setProfileUseMD5() { ProfileIsMD5 = true; }
 
-  /// Don't read profile without context if the flag is set. This is only meaningful
-  /// for ExtBinary format.
-  virtual void setSkipFlatProf(bool Skip) {}
+  /// Don't read profile without context if the flag is set.
+  void setSkipFlatProf(bool Skip) { SkipFlatProf = Skip; }
+
   /// Return whether any name in the profile contains ".__uniq." suffix.
   virtual bool hasUniqSuffix() { return false; }
 
   SampleProfileReaderItaniumRemapper *getRemapper() { return Remapper.get(); }
 
   void setModule(const Module *Mod) { M = Mod; }
+
+  void setFuncNameToProfNameMap(
+      const HashKeyMap<std::unordered_map, FunctionId, FunctionId> &FPMap) {
+    FuncNameToProfNameMap = &FPMap;
+  }
 
 protected:
   /// Map every function to its associated profile.
@@ -508,10 +534,6 @@ protected:
   /// Memory buffer holding the profile file.
   std::unique_ptr<MemoryBuffer> Buffer;
 
-  /// Extra name buffer holding names created on demand.
-  /// This should only be needed for md5 profiles.
-  std::unordered_set<std::string> MD5NameBuffer;
-
   /// Profile summary information.
   std::unique_ptr<ProfileSummary> Summary;
 
@@ -524,7 +546,31 @@ protected:
   /// Compute summary for this profile.
   void computeSummary();
 
+  /// Read sample profiles for the given functions and write them to the given
+  /// profile map. Currently it's only used for extended binary format to load
+  /// the profiles on-demand.
+  virtual std::error_code read(const DenseSet<StringRef> &FuncsToUse,
+                               SampleProfileMap &Profiles) {
+    return sampleprof_error::not_implemented;
+  }
+
   std::unique_ptr<SampleProfileReaderItaniumRemapper> Remapper;
+
+  // A map pointer to the FuncNameToProfNameMap in SampleProfileLoader,
+  // which maps the function name to the matched profile name. This is used
+  // for sample loader to look up profile using the new name.
+  const HashKeyMap<std::unordered_map, FunctionId, FunctionId>
+      *FuncNameToProfNameMap = nullptr;
+
+  // A map from a function's context hash to its meta data section range, used
+  // for on-demand read function profile metadata.
+  std::unordered_map<uint64_t, std::pair<const uint8_t *, const uint8_t *>>
+      FuncMetadataIndex;
+
+  std::pair<const uint8_t *, const uint8_t *> ProfileSecRange;
+
+  /// Whether the profile has attribute metadata.
+  bool ProfileHasAttribute = false;
 
   /// \brief Whether samples are collected based on pseudo probes.
   bool ProfileIsProbeBased = false;
@@ -556,6 +602,10 @@ protected:
   /// Whether the profile uses MD5 for Sample Contexts and function names. This
   /// can be one-way overriden by the user to force use MD5.
   bool ProfileIsMD5 = false;
+
+  /// If SkipFlatProf is true, skip functions marked with !Flat in text mode or
+  /// sections with SecFlagFlat flag in ExtBinary mode.
+  bool SkipFlatProf = false;
 };
 
 class SampleProfileReaderText : public SampleProfileReader {
@@ -595,7 +645,9 @@ public:
 
   /// It includes all the names that have samples either in outline instance
   /// or inline instance.
-  std::vector<StringRef> *getNameTable() override { return &NameTable; }
+  std::vector<FunctionId> *getNameTable() override {
+    return &NameTable;
+  }
 
 protected:
   /// Read a numeric value of type T from the profile.
@@ -623,6 +675,8 @@ protected:
 
   /// Read the next function profile instance.
   std::error_code readFuncProfile(const uint8_t *Start);
+  std::error_code readFuncProfile(const uint8_t *Start,
+                                  SampleProfileMap &Profiles);
 
   /// Read the contents of the given profile instance.
   std::error_code readProfile(FunctionSamples &FProfile);
@@ -637,7 +691,7 @@ protected:
   std::error_code readNameTable();
 
   /// Read a string indirectly via the name table. Optionally return the index.
-  ErrorOr<StringRef> readStringFromTable(size_t *RetIdx = nullptr);
+  ErrorOr<FunctionId> readStringFromTable(size_t *RetIdx = nullptr);
 
   /// Read a context indirectly via the CSNameTable. Optionally return the
   /// index.
@@ -654,19 +708,7 @@ protected:
   const uint8_t *End = nullptr;
 
   /// Function name table.
-  std::vector<StringRef> NameTable;
-
-  /// If MD5 is used in NameTable section, the section saves uint64_t data.
-  /// The uint64_t data has to be converted to a string and then the string
-  /// will be used to initialize StringRef in NameTable.
-  /// Note NameTable contains StringRef so it needs another buffer to own
-  /// the string data. MD5StringBuf serves as the string buffer that is
-  /// referenced by NameTable (vector of StringRef). We make sure
-  /// the lifetime of MD5StringBuf is not shorter than that of NameTable.
-  std::vector<std::string> MD5StringBuf;
-
-  /// The starting address of fixed length MD5 name table section.
-  const uint8_t *MD5NameMemStart = nullptr;
+  std::vector<FunctionId> NameTable;
 
   /// CSNameTable is used to save full context vectors. It is the backing buffer
   /// for SampleContextFrames.
@@ -734,11 +776,15 @@ protected:
   std::error_code readSecHdrTableEntry(uint64_t Idx);
   std::error_code readSecHdrTable();
 
+  std::error_code readFuncMetadata(bool ProfileHasAttribute,
+                                   SampleProfileMap &Profiles);
   std::error_code readFuncMetadata(bool ProfileHasAttribute);
   std::error_code readFuncMetadata(bool ProfileHasAttribute,
                                    FunctionSamples *FProfile);
   std::error_code readFuncOffsetTable();
   std::error_code readFuncProfiles();
+  std::error_code readFuncProfiles(const DenseSet<StringRef> &FuncsToUse,
+                                   SampleProfileMap &Profiles);
   std::error_code readNameTableSec(bool IsMD5, bool FixedLengthMD5);
   std::error_code readCSNameTableSec();
   std::error_code readProfileSymbolList();
@@ -768,10 +814,6 @@ protected:
   /// The set containing the functions to use when compiling a module.
   DenseSet<StringRef> FuncsToUse;
 
-  /// If SkipFlatProf is true, skip the sections with
-  /// SecFlagFlat flag.
-  bool SkipFlatProf = false;
-
 public:
   SampleProfileReaderExtBinaryBase(std::unique_ptr<MemoryBuffer> B,
                                    LLVMContext &C, SampleProfileFormat Format)
@@ -794,7 +836,13 @@ public:
     return std::move(ProfSymList);
   };
 
-  void setSkipFlatProf(bool Skip) override { SkipFlatProf = Skip; }
+private:
+  /// Read the profiles on-demand for the given functions. This is used after
+  /// stale call graph matching finds new functions whose profiles aren't loaded
+  /// at the beginning and we need to loaded the profiles explicitly for
+  /// potential matching.
+  std::error_code read(const DenseSet<StringRef> &FuncsToUse,
+                       SampleProfileMap &Profiles) override;
 };
 
 class SampleProfileReaderExtBinary : public SampleProfileReaderExtBinaryBase {

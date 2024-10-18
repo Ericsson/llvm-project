@@ -10,6 +10,7 @@
 #ifndef _LIBCPP_EXPERIMENTAL___SIMD_UTILITY_H
 #define _LIBCPP_EXPERIMENTAL___SIMD_UTILITY_H
 
+#include <__config>
 #include <__type_traits/is_arithmetic.h>
 #include <__type_traits/is_const.h>
 #include <__type_traits/is_constant_evaluated.h>
@@ -19,6 +20,8 @@
 #include <__type_traits/is_volatile.h>
 #include <__type_traits/void_t.h>
 #include <__utility/declval.h>
+#include <__utility/integer_sequence.h>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 
@@ -44,7 +47,7 @@ _LIBCPP_HIDE_FROM_ABI auto __choose_mask_type() {
   } else if constexpr (sizeof(_Tp) == 8) {
     return uint64_t{};
   }
-#  ifndef _LIBCPP_HAS_NO_INT128
+#  if _LIBCPP_HAS_INT128
   else if constexpr (sizeof(_Tp) == 16) {
     return __uint128_t{};
   }
@@ -70,6 +73,25 @@ inline constexpr bool __can_broadcast_v =
     (__is_vectorizable_v<_Up> && __is_non_narrowing_convertible_v<_Up, _Tp>) ||
     (!__is_vectorizable_v<_Up> && is_convertible_v<_Up, _Tp>) || is_same_v<_Up, int> ||
     (is_same_v<_Up, unsigned int> && is_unsigned_v<_Tp>);
+
+template <class _Tp, class _Generator, std::size_t _Idx, class = void>
+inline constexpr bool __is_well_formed = false;
+
+template <class _Tp, class _Generator, std::size_t _Idx>
+inline constexpr bool
+    __is_well_formed<_Tp,
+                     _Generator,
+                     _Idx,
+                     std::void_t<decltype(std::declval<_Generator>()(integral_constant<size_t, _Idx>()))>> =
+        __can_broadcast_v<_Tp, decltype(std::declval<_Generator>()(integral_constant<size_t, _Idx>()))>;
+
+template <class _Tp, class _Generator, std::size_t... _Idxes>
+_LIBCPP_HIDE_FROM_ABI constexpr bool __can_generate(index_sequence<_Idxes...>) {
+  return (true && ... && __is_well_formed<_Tp, _Generator, _Idxes>);
+}
+
+template <class _Tp, class _Generator, std::size_t _Size>
+inline constexpr bool __can_generate_v = experimental::__can_generate<_Tp, _Generator>(make_index_sequence<_Size>());
 
 } // namespace parallelism_v2
 _LIBCPP_END_NAMESPACE_EXPERIMENTAL

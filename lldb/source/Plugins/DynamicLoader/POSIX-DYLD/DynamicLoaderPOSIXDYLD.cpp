@@ -18,6 +18,7 @@
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Target/Platform.h"
+#include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Target/ThreadPlanRunToAddress.h"
@@ -53,7 +54,8 @@ DynamicLoader *DynamicLoaderPOSIXDYLD::CreateInstance(Process *process,
         process->GetTarget().GetArchitecture().GetTriple();
     if (triple_ref.getOS() == llvm::Triple::FreeBSD ||
         triple_ref.getOS() == llvm::Triple::Linux ||
-        triple_ref.getOS() == llvm::Triple::NetBSD)
+        triple_ref.getOS() == llvm::Triple::NetBSD ||
+        triple_ref.getOS() == llvm::Triple::OpenBSD)
       create = true;
   }
 
@@ -106,21 +108,6 @@ void DynamicLoaderPOSIXDYLD::DidAttach() {
 
   // if we dont have a load address we cant re-base
   bool rebase_exec = load_offset != LLDB_INVALID_ADDRESS;
-
-  // if we have a valid executable
-  if (executable_sp.get()) {
-    lldb_private::ObjectFile *obj = executable_sp->GetObjectFile();
-    if (obj) {
-      // don't rebase if the module already has a load address
-      Target &target = m_process->GetTarget();
-      Address addr = obj->GetImageInfoAddress(&target);
-      if (addr.GetLoadAddress(&target) != LLDB_INVALID_ADDRESS)
-        rebase_exec = false;
-    }
-  } else {
-    // no executable, nothing to re-base
-    rebase_exec = false;
-  }
 
   // if the target executable should be re-based
   if (rebase_exec) {
@@ -337,29 +324,20 @@ bool DynamicLoaderPOSIXDYLD::SetRendezvousBreakpoint() {
     };
 
     ModuleSP interpreter = LoadInterpreterModule();
-    if (!interpreter) {
-      FileSpecList containingModules;
+    FileSpecList containingModules;
+    if (interpreter)
+      containingModules.Append(interpreter->GetFileSpec());
+    else
       containingModules.Append(
           m_process->GetTarget().GetExecutableModulePointer()->GetFileSpec());
 
-      dyld_break = target.CreateBreakpoint(
-          &containingModules, /*containingSourceFiles=*/nullptr,
-          DebugStateCandidates, eFunctionNameTypeFull, eLanguageTypeC,
-          /*m_offset=*/0,
-          /*skip_prologue=*/eLazyBoolNo,
-          /*internal=*/true,
-          /*request_hardware=*/false);
-    } else {
-      FileSpecList containingModules;
-      containingModules.Append(interpreter->GetFileSpec());
-      dyld_break = target.CreateBreakpoint(
-          &containingModules, /*containingSourceFiles=*/nullptr,
-          DebugStateCandidates, eFunctionNameTypeFull, eLanguageTypeC,
-          /*m_offset=*/0,
-          /*skip_prologue=*/eLazyBoolNo,
-          /*internal=*/true,
-          /*request_hardware=*/false);
-    }
+    dyld_break = target.CreateBreakpoint(
+        &containingModules, /*containingSourceFiles=*/nullptr,
+        DebugStateCandidates, eFunctionNameTypeFull, eLanguageTypeC,
+        /*m_offset=*/0,
+        /*skip_prologue=*/eLazyBoolNo,
+        /*internal=*/true,
+        /*request_hardware=*/false);
   }
 
   if (dyld_break->GetNumResolvedLocations() != 1) {
@@ -446,6 +424,14 @@ void DynamicLoaderPOSIXDYLD::RefreshModules() {
       m_initial_modules_added = true;
     }
     for (; I != E; ++I) {
+      // Don't load a duplicate copy of ld.so if we have already loaded it
+      // earlier in LoadInterpreterModule. If we instead loaded then unloaded it
+      // later, the section information for ld.so would be removed. That
+      // information is required for placing breakpoints on Arm/Thumb systems.
+      if ((m_interpreter_module.lock() != nullptr) &&
+          (I->base_addr == m_interpreter_base))
+        continue;
+
       ModuleSP module_sp =
           LoadModuleAtAddress(I->file_spec, I->link_addr, I->base_addr, true);
       if (!module_sp.get())
@@ -458,15 +444,6 @@ void DynamicLoaderPOSIXDYLD::RefreshModules() {
           m_interpreter_module = module_sp;
         } else if (module_sp == interpreter_sp) {
           // Module already loaded.
-          continue;
-        } else {
-          // If this is a duplicate instance of ld.so, unload it.  We may end
-          // up with it if we load it via a different path than before
-          // (symlink vs real path).
-          // TODO: remove this once we either fix library matching or avoid
-          // loading the interpreter when setting the rendezvous breakpoint.
-          UnloadSections(module_sp);
-          loaded_modules.Remove(module_sp);
           continue;
         }
       }
@@ -515,6 +492,19 @@ DynamicLoaderPOSIXDYLD::GetStepThroughTrampolinePlan(Thread &thread,
   Target &target = thread.GetProcess()->GetTarget();
   const ModuleList &images = target.GetImages();
 
+  llvm::StringRef target_name = sym_name.GetStringRef();
+  // On AArch64, the trampoline name has a prefix (__AArch64ADRPThunk_ or
+  // __AArch64AbsLongThunk_) added to the function name. If we detect a
+  // trampoline with the prefix, we need to remove the prefix to find the
+  // function symbol.
+  if (target_name.consume_front("__AArch64ADRPThunk_") ||
+      target_name.consume_front("__AArch64AbsLongThunk_")) {
+    // An empty target name can happen for trampolines generated for
+    // section-referencing relocations.
+    if (!target_name.empty()) {
+      sym_name = ConstString(target_name);
+    }
+  }
   images.FindSymbolsWithNameAndType(sym_name, eSymbolTypeCode, target_symbols);
   if (!target_symbols.GetSize())
     return thread_plan_sp;
@@ -580,10 +570,17 @@ ModuleSP DynamicLoaderPOSIXDYLD::LoadInterpreterModule() {
   FileSpec file(info.GetName().GetCString());
   ModuleSpec module_spec(file, target.GetArchitecture());
 
-  if (ModuleSP module_sp = target.GetOrCreateModule(module_spec,
-                                                    true /* notify */)) {
+  // Don't notify that module is added here because its loading section
+  // addresses are not updated yet. We manually notify it below.
+  if (ModuleSP module_sp =
+          target.GetOrCreateModule(module_spec, /*notify=*/false)) {
     UpdateLoadedSections(module_sp, LLDB_INVALID_ADDRESS, m_interpreter_base,
                          false);
+    // Manually notify that dynamic linker is loaded after updating load section
+    // addersses so that breakpoints can be resolved.
+    ModuleList module_list;
+    module_list.Append(module_sp);
+    target.ModulesDidLoad(module_list);
     m_interpreter_module = module_sp;
     return module_sp;
   }
@@ -869,4 +866,83 @@ bool DynamicLoaderPOSIXDYLD::AlwaysRelyOnEHUnwindInfo(
 
 bool DynamicLoaderPOSIXDYLD::IsCoreFile() const {
   return !m_process->IsLiveDebugSession();
+}
+
+// For our ELF/POSIX builds save off the fs_base/gs_base regions
+static void AddThreadLocalMemoryRegions(Process &process, ThreadSP &thread_sp,
+                                        std::vector<MemoryRegionInfo> &ranges) {
+  lldb::RegisterContextSP reg_ctx = thread_sp->GetRegisterContext();
+  if (!reg_ctx)
+    return;
+
+  const RegisterInfo *reg_info = reg_ctx->GetRegisterInfo(
+      lldb::RegisterKind::eRegisterKindGeneric, LLDB_REGNUM_GENERIC_TP);
+  if (!reg_info)
+    return;
+
+  lldb_private::RegisterValue thread_local_register_value;
+  bool success = reg_ctx->ReadRegister(reg_info, thread_local_register_value);
+  if (!success)
+    return;
+
+  const uint64_t fail_value = UINT64_MAX;
+  bool readSuccess = false;
+  const lldb::addr_t reg_value_addr =
+      thread_local_register_value.GetAsUInt64(fail_value, &readSuccess);
+  if (!readSuccess || reg_value_addr == fail_value)
+    return;
+
+  MemoryRegionInfo thread_local_region;
+  Status err = process.GetMemoryRegionInfo(reg_value_addr, thread_local_region);
+  if (err.Fail())
+    return;
+
+  ranges.push_back(thread_local_region);
+}
+
+// Save off the link map for core files.
+static void AddLinkMapSections(Process &process,
+                               std::vector<MemoryRegionInfo> &ranges) {
+  ModuleList &module_list = process.GetTarget().GetImages();
+  Target *target = &process.GetTarget();
+  for (size_t idx = 0; idx < module_list.GetSize(); idx++) {
+    ModuleSP module_sp = module_list.GetModuleAtIndex(idx);
+    if (!module_sp)
+      continue;
+
+    ObjectFile *obj = module_sp->GetObjectFile();
+    if (!obj)
+      continue;
+    Address addr = obj->GetImageInfoAddress(target);
+    addr_t load_addr = addr.GetLoadAddress(target);
+    if (load_addr == LLDB_INVALID_ADDRESS)
+      continue;
+
+    MemoryRegionInfo link_map_section;
+    Status err = process.GetMemoryRegionInfo(load_addr, link_map_section);
+    if (err.Fail())
+      continue;
+
+    ranges.push_back(link_map_section);
+  }
+}
+
+void DynamicLoaderPOSIXDYLD::CalculateDynamicSaveCoreRanges(
+    lldb_private::Process &process,
+    std::vector<lldb_private::MemoryRegionInfo> &ranges,
+    llvm::function_ref<bool(const lldb_private::Thread &)>
+        save_thread_predicate) {
+  ThreadList &thread_list = process.GetThreadList();
+  for (size_t idx = 0; idx < thread_list.GetSize(); idx++) {
+    ThreadSP thread_sp = thread_list.GetThreadAtIndex(idx);
+    if (!thread_sp)
+      continue;
+
+    if (!save_thread_predicate(*thread_sp))
+      continue;
+
+    AddThreadLocalMemoryRegions(process, thread_sp, ranges);
+  }
+
+  AddLinkMapSections(process, ranges);
 }

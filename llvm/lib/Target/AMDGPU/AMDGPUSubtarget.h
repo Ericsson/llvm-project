@@ -39,7 +39,8 @@ public:
     VOLCANIC_ISLANDS = 7,
     GFX9 = 8,
     GFX10 = 9,
-    GFX11 = 10
+    GFX11 = 10,
+    GFX12 = 11,
   };
 
 private:
@@ -70,7 +71,7 @@ protected:
   char WavefrontSizeLog2 = 0;
 
 public:
-  AMDGPUSubtarget(const Triple &TT);
+  AMDGPUSubtarget(Triple TT);
 
   static const AMDGPUSubtarget &get(const MachineFunction &MF);
   static const AMDGPUSubtarget &get(const TargetMachine &TM,
@@ -225,10 +226,18 @@ public:
     return WavefrontSizeLog2;
   }
 
+  /// Return the maximum number of bytes of LDS available for all workgroups
+  /// running on the same WGP or CU.
+  /// For GFX10-GFX12 in WGP mode this is 128k even though each workgroup is
+  /// limited to 64k.
   unsigned getLocalMemorySize() const {
     return LocalMemorySize;
   }
 
+  /// Return the maximum number of bytes of LDS that can be allocated to a
+  /// single workgroup.
+  /// For GFX10-GFX12 in WGP mode this is limited to 64k even though the WGP has
+  /// 128k in total.
   unsigned getAddressableLocalMemorySize() const {
     return AddressableLocalMemorySize;
   }
@@ -286,6 +295,9 @@ public:
   /// Return the maximum workitem ID value in the function, for the given (0, 1,
   /// 2) dimension.
   unsigned getMaxWorkitemID(const Function &Kernel, unsigned Dimension) const;
+
+  /// Return the number of work groups for the function.
+  SmallVector<unsigned> getMaxNumWorkGroups(const Function &F) const;
 
   /// Return true if only a single workitem can be active in a wave.
   bool isSingleLaneExecution(const Function &Kernel) const;

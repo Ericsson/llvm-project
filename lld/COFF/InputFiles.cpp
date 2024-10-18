@@ -25,6 +25,7 @@
 #include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/LTO/LTO.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/COFF.h"
@@ -61,7 +62,7 @@ static StringRef getBasename(StringRef path) {
 std::string lld::toString(const coff::InputFile *file) {
   if (!file)
     return "<internal>";
-  if (file->parentName.empty() || file->kind() == coff::InputFile::ImportKind)
+  if (file->parentName.empty())
     return std::string(file->getName());
 
   return (getBasename(file->parentName) + "(" + getBasename(file->getName()) +
@@ -81,7 +82,7 @@ static void checkAndSetWeakAlias(COFFLinkerContext &ctx, InputFile *f,
       // of another symbol emitted near the weak symbol.
       // Just use the definition from the first object file that defined
       // this weak symbol.
-      if (ctx.config.mingw)
+      if (ctx.config.allowDuplicateWeak)
         return;
       ctx.symtab.reportDuplicate(source, f);
     }
@@ -99,6 +100,20 @@ ArchiveFile::ArchiveFile(COFFLinkerContext &ctx, MemoryBufferRef m)
 void ArchiveFile::parse() {
   // Parse a MemoryBufferRef as an archive file.
   file = CHECK(Archive::create(mb), this);
+
+  // Try to read symbols from ECSYMBOLS section on ARM64EC.
+  if (isArm64EC(ctx.config.machine)) {
+    iterator_range<Archive::symbol_iterator> symbols =
+        CHECK(file->ec_symbols(), this);
+    if (!symbols.empty()) {
+      for (const Archive::Symbol &sym : symbols)
+        ctx.symtab.addLazyArchive(this, sym);
+
+      // Read both EC and native symbols on ARM64X.
+      if (ctx.config.machine != ARM64X)
+        return;
+    }
+  }
 
   // Read the symbol table to construct Lazy objects.
   for (const Archive::Symbol &sym : file->symbols())
@@ -152,6 +167,40 @@ void ObjFile::parseLazy() {
   }
 }
 
+struct ECMapEntry {
+  ulittle32_t src;
+  ulittle32_t dst;
+  ulittle32_t type;
+};
+
+void ObjFile::initializeECThunks() {
+  for (SectionChunk *chunk : hybmpChunks) {
+    if (chunk->getContents().size() % sizeof(ECMapEntry)) {
+      error("Invalid .hybmp chunk size " + Twine(chunk->getContents().size()));
+      continue;
+    }
+
+    const uint8_t *end =
+        chunk->getContents().data() + chunk->getContents().size();
+    for (const uint8_t *iter = chunk->getContents().data(); iter != end;
+         iter += sizeof(ECMapEntry)) {
+      auto entry = reinterpret_cast<const ECMapEntry *>(iter);
+      switch (entry->type) {
+      case Arm64ECThunkType::Entry:
+        ctx.symtab.addEntryThunk(getSymbol(entry->src), getSymbol(entry->dst));
+        break;
+      case Arm64ECThunkType::Exit:
+        ctx.symtab.addExitThunk(getSymbol(entry->src), getSymbol(entry->dst));
+        break;
+      case Arm64ECThunkType::GuestExit:
+        break;
+      default:
+        warn("Ignoring unknown EC thunk type " + Twine(entry->type));
+      }
+    }
+  }
+}
+
 void ObjFile::parse() {
   // Parse a memory buffer as a COFF file.
   std::unique_ptr<Binary> bin = CHECK(createBinary(mb), this);
@@ -168,6 +217,7 @@ void ObjFile::parse() {
   initializeSymbols();
   initializeFlags();
   initializeDependencies();
+  initializeECThunks();
 }
 
 const coff_section *ObjFile::getSection(uint32_t i) {
@@ -236,13 +286,17 @@ SectionChunk *ObjFile::readSection(uint32_t sectionNumber,
   // CodeView needs linker support. We need to interpret debug info,
   // and then write it to a separate .pdb file.
 
-  // Ignore DWARF debug info unless /debug is given.
-  if (!ctx.config.debug && name.starts_with(".debug_"))
+  // Ignore DWARF debug info unless requested to be included.
+  if (!ctx.config.includeDwarfChunks && name.starts_with(".debug_"))
     return nullptr;
 
   if (sec->Characteristics & llvm::COFF::IMAGE_SCN_LNK_REMOVE)
     return nullptr;
-  auto *c = make<SectionChunk>(this, sec);
+  SectionChunk *c;
+  if (isArm64EC(getMachineType()))
+    c = make<SectionChunkEC>(this, sec);
+  else
+    c = make<SectionChunk>(this, sec);
   if (def)
     c->checksum = def->CheckSum;
 
@@ -260,6 +314,8 @@ SectionChunk *ObjFile::readSection(uint32_t sectionNumber,
     guardEHContChunks.push_back(c);
   else if (name == ".sxdata")
     sxDataChunks.push_back(c);
+  else if (isArm64EC(getMachineType()) && name == ".hybmp$x")
+    hybmpChunks.push_back(c);
   else if (ctx.config.tailMerge && sec->NumberOfRelocations == 0 &&
            name == ".rdata" && leaderName.starts_with("??_C@"))
     // COFF sections that look like string literal sections (i.e. no
@@ -685,7 +741,7 @@ std::optional<Symbol *> ObjFile::createDefined(
   return createRegular(sym);
 }
 
-MachineTypes ObjFile::getMachineType() {
+MachineTypes ObjFile::getMachineType() const {
   if (coffObj)
     return static_cast<MachineTypes>(coffObj->getMachine());
   return IMAGE_FILE_MACHINE_UNKNOWN;
@@ -709,7 +765,7 @@ void ObjFile::initializeFlags() {
 
   DebugSubsectionArray subsections;
 
-  BinaryStreamReader reader(data, support::little);
+  BinaryStreamReader reader(data, llvm::endianness::little);
   ExitOnError exitOnErr;
   exitOnErr(reader.readArray(subsections, data.size()));
 
@@ -775,7 +831,7 @@ void ObjFile::initializeDependencies() {
   // Get the first type record. It will indicate if this object uses a type
   // server (/Zi) or a PCH file (/Yu).
   CVTypeArray types;
-  BinaryStreamReader reader(data, support::little);
+  BinaryStreamReader reader(data, llvm::endianness::little);
   cantFail(reader.readArray(types, reader.getLength()));
   CVTypeArray::Iterator firstType = types.begin();
   if (firstType == types.end())
@@ -818,19 +874,6 @@ void ObjFile::initializeDependencies() {
   debugTypesObj = makeTpiSource(ctx, this);
 }
 
-// Make a PDB path assuming the PDB is in the same folder as the OBJ
-static std::string getPdbBaseName(ObjFile *file, StringRef tSPath) {
-  StringRef localPath =
-      !file->parentName.empty() ? file->parentName : file->getName();
-  SmallString<128> path = sys::path::parent_path(localPath);
-
-  // Currently, type server PDBs are only created by MSVC cl, which only runs
-  // on Windows, so we can assume type server paths are Windows style.
-  sys::path::append(path,
-                    sys::path::filename(tSPath, sys::path::Style::windows));
-  return std::string(path.str());
-}
-
 // The casing of the PDB path stamped in the OBJ can differ from the actual path
 // on disk. With this, we ensure to always use lowercase as a key for the
 // pdbInputFileInstances map, at least on Windows.
@@ -843,17 +886,35 @@ static std::string normalizePdbPath(StringRef path) {
 }
 
 // If existing, return the actual PDB path on disk.
-static std::optional<std::string> findPdbPath(StringRef pdbPath,
-                                              ObjFile *dependentFile) {
+static std::optional<std::string>
+findPdbPath(StringRef pdbPath, ObjFile *dependentFile, StringRef outputPath) {
   // Ensure the file exists before anything else. In some cases, if the path
   // points to a removable device, Driver::enqueuePath() would fail with an
   // error (EAGAIN, "resource unavailable try again") which we want to skip
   // silently.
   if (llvm::sys::fs::exists(pdbPath))
     return normalizePdbPath(pdbPath);
-  std::string ret = getPdbBaseName(dependentFile, pdbPath);
-  if (llvm::sys::fs::exists(ret))
-    return normalizePdbPath(ret);
+
+  StringRef objPath = !dependentFile->parentName.empty()
+                          ? dependentFile->parentName
+                          : dependentFile->getName();
+
+  // Currently, type server PDBs are only created by MSVC cl, which only runs
+  // on Windows, so we can assume type server paths are Windows style.
+  StringRef pdbName = sys::path::filename(pdbPath, sys::path::Style::windows);
+
+  // Check if the PDB is in the same folder as the OBJ.
+  SmallString<128> path;
+  sys::path::append(path, sys::path::parent_path(objPath), pdbName);
+  if (llvm::sys::fs::exists(path))
+    return normalizePdbPath(path);
+
+  // Check if the PDB is in the output folder.
+  path.clear();
+  sys::path::append(path, sys::path::parent_path(outputPath), pdbName);
+  if (llvm::sys::fs::exists(path))
+    return normalizePdbPath(path);
+
   return std::nullopt;
 }
 
@@ -865,7 +926,7 @@ PDBInputFile::~PDBInputFile() = default;
 PDBInputFile *PDBInputFile::findFromRecordPath(const COFFLinkerContext &ctx,
                                                StringRef path,
                                                ObjFile *fromFile) {
-  auto p = findPdbPath(path.str(), fromFile);
+  auto p = findPdbPath(path.str(), fromFile, ctx.config.outputFile);
   if (!p)
     return nullptr;
   auto it = ctx.pdbInputFileInstances.find(*p);
@@ -931,7 +992,7 @@ std::optional<DILineInfo> ObjFile::getDILineInfo(uint32_t offset,
 }
 
 void ObjFile::enqueuePdbFile(StringRef path, ObjFile *fromFile) {
-  auto p = findPdbPath(path.str(), fromFile);
+  auto p = findPdbPath(path.str(), fromFile, ctx.config.outputFile);
   if (!p)
     return;
   auto it = ctx.pdbInputFileInstances.emplace(*p, nullptr);
@@ -941,21 +1002,52 @@ void ObjFile::enqueuePdbFile(StringRef path, ObjFile *fromFile) {
 }
 
 ImportFile::ImportFile(COFFLinkerContext &ctx, MemoryBufferRef m)
-    : InputFile(ctx, ImportKind, m), live(!ctx.config.doGC), thunkLive(live) {}
+    : InputFile(ctx, ImportKind, m), live(!ctx.config.doGC) {}
+
+MachineTypes ImportFile::getMachineType() const {
+  uint16_t machine =
+      reinterpret_cast<const coff_import_header *>(mb.getBufferStart())
+          ->Machine;
+  return MachineTypes(machine);
+}
+
+ImportThunkChunk *ImportFile::makeImportThunk() {
+  switch (hdr->Machine) {
+  case AMD64:
+    return make<ImportThunkChunkX64>(ctx, impSym);
+  case I386:
+    return make<ImportThunkChunkX86>(ctx, impSym);
+  case ARM64:
+    return make<ImportThunkChunkARM64>(ctx, impSym, ARM64);
+  case ARMNT:
+    return make<ImportThunkChunkARM>(ctx, impSym);
+  }
+  llvm_unreachable("unknown machine type");
+}
 
 void ImportFile::parse() {
-  const char *buf = mb.getBufferStart();
-  const auto *hdr = reinterpret_cast<const coff_import_header *>(buf);
+  const auto *hdr =
+      reinterpret_cast<const coff_import_header *>(mb.getBufferStart());
 
   // Check if the total size is valid.
-  if (mb.getBufferSize() != sizeof(*hdr) + hdr->SizeOfData)
+  if (mb.getBufferSize() < sizeof(*hdr) ||
+      mb.getBufferSize() != sizeof(*hdr) + hdr->SizeOfData)
     fatal("broken import library");
 
   // Read names and create an __imp_ symbol.
-  StringRef name = saver().save(StringRef(buf + sizeof(*hdr)));
+  StringRef buf = mb.getBuffer().substr(sizeof(*hdr));
+  auto split = buf.split('\0');
+  buf = split.second;
+  StringRef name;
+  if (isArm64EC(hdr->Machine)) {
+    if (std::optional<std::string> demangledName =
+            getArm64ECDemangledFunctionName(split.first))
+      name = saver().save(*demangledName);
+  }
+  if (name.empty())
+    name = saver().save(split.first);
   StringRef impName = saver().save("__imp_" + name);
-  const char *nameStart = buf + sizeof(coff_import_header) + name.size() + 1;
-  dllName = std::string(StringRef(nameStart));
+  dllName = buf.split('\0').first;
   StringRef extName;
   switch (hdr->getNameType()) {
   case IMPORT_ORDINAL:
@@ -971,26 +1063,74 @@ void ImportFile::parse() {
     extName = ltrim1(name, "?@_");
     extName = extName.substr(0, extName.find('@'));
     break;
+  case IMPORT_NAME_EXPORTAS:
+    extName = buf.substr(dllName.size() + 1).split('\0').first;
+    break;
   }
 
   this->hdr = hdr;
   externalName = extName;
 
-  impSym = ctx.symtab.addImportData(impName, this);
+  bool isCode = hdr->getType() == llvm::COFF::IMPORT_CODE;
+
+  if (ctx.config.machine != ARM64EC) {
+    impSym = ctx.symtab.addImportData(impName, this, location);
+  } else {
+    // In addition to the regular IAT, ARM64EC also contains an auxiliary IAT,
+    // which holds addresses that are guaranteed to be callable directly from
+    // ARM64 code. Function symbol naming is swapped: __imp_ symbols refer to
+    // the auxiliary IAT, while __imp_aux_ symbols refer to the regular IAT. For
+    // data imports, the naming is reversed.
+    StringRef auxImpName = saver().save("__imp_aux_" + name);
+    if (isCode) {
+      impSym = ctx.symtab.addImportData(auxImpName, this, location);
+      impECSym = ctx.symtab.addImportData(impName, this, auxLocation);
+    } else {
+      impSym = ctx.symtab.addImportData(impName, this, location);
+      impECSym = ctx.symtab.addImportData(auxImpName, this, auxLocation);
+    }
+    if (!impECSym)
+      return;
+
+    StringRef auxImpCopyName = saver().save("__auximpcopy_" + name);
+    auxImpCopySym =
+        ctx.symtab.addImportData(auxImpCopyName, this, auxCopyLocation);
+    if (!auxImpCopySym)
+      return;
+  }
   // If this was a duplicate, we logged an error but may continue;
   // in this case, impSym is nullptr.
   if (!impSym)
     return;
 
   if (hdr->getType() == llvm::COFF::IMPORT_CONST)
-    static_cast<void>(ctx.symtab.addImportData(name, this));
+    static_cast<void>(ctx.symtab.addImportData(name, this, location));
 
   // If type is function, we need to create a thunk which jump to an
   // address pointed by the __imp_ symbol. (This allows you to call
   // DLL functions just like regular non-DLL functions.)
-  if (hdr->getType() == llvm::COFF::IMPORT_CODE)
-    thunkSym = ctx.symtab.addImportThunk(
-        name, cast_or_null<DefinedImportData>(impSym), hdr->Machine);
+  if (isCode) {
+    if (ctx.config.machine != ARM64EC) {
+      thunkSym = ctx.symtab.addImportThunk(name, impSym, makeImportThunk());
+    } else {
+      thunkSym = ctx.symtab.addImportThunk(
+          name, impSym, make<ImportThunkChunkX64>(ctx, impSym));
+
+      if (std::optional<std::string> mangledName =
+              getArm64ECMangledFunctionName(name)) {
+        StringRef auxThunkName = saver().save(*mangledName);
+        auxThunkSym = ctx.symtab.addImportThunk(
+            auxThunkName, impECSym,
+            make<ImportThunkChunkARM64>(ctx, impECSym, ARM64EC));
+      }
+
+      StringRef impChkName = saver().save("__impchk_" + name);
+      impchkThunk = make<ImportThunkChunkARM64EC>(this);
+      impchkThunk->sym =
+          ctx.symtab.addImportThunk(impChkName, impSym, impchkThunk);
+      ctx.driver.pullArm64ECIcallHelper();
+    }
+  }
 }
 
 BitcodeFile::BitcodeFile(COFFLinkerContext &ctx, MemoryBufferRef mb,
@@ -1040,6 +1180,21 @@ void BitcodeFile::parse() {
       fakeSC = &ctx.ltoDataSectionChunk.chunk;
     if (objSym.isUndefined()) {
       sym = ctx.symtab.addUndefined(symName, this, false);
+      if (objSym.isWeak())
+        sym->deferUndefined = true;
+      // If one LTO object file references (i.e. has an undefined reference to)
+      // a symbol with an __imp_ prefix, the LTO compilation itself sees it
+      // as unprefixed but with a dllimport attribute instead, and doesn't
+      // understand the relation to a concrete IR symbol with the __imp_ prefix.
+      //
+      // For such cases, mark the symbol as used in a regular object (i.e. the
+      // symbol must be retained) so that the linker can associate the
+      // references in the end. If the symbol is defined in an import library
+      // or in a regular object file, this has no effect, but if it is defined
+      // in another LTO object file, this makes sure it is kept, to fulfill
+      // the reference when linking the output of the LTO compilation.
+      if (symName.starts_with("__imp_"))
+        sym->isUsedInRegularObj = true;
     } else if (objSym.isCommon()) {
       sym = ctx.symtab.addCommon(this, symName, objSym.getCommonSize());
     } else if (objSym.isWeak() && objSym.isIndirect()) {
@@ -1066,7 +1221,7 @@ void BitcodeFile::parse() {
     if (objSym.isUsed())
       ctx.config.gcroot.push_back(sym);
   }
-  directives = obj->getCOFFLinkerOpts();
+  directives = saver.save(obj->getCOFFLinkerOpts());
 }
 
 void BitcodeFile::parseLazy() {
@@ -1075,13 +1230,14 @@ void BitcodeFile::parseLazy() {
       ctx.symtab.addLazyObject(this, sym.getName());
 }
 
-MachineTypes BitcodeFile::getMachineType() {
+MachineTypes BitcodeFile::getMachineType() const {
   switch (Triple(obj->getTargetTriple()).getArch()) {
   case Triple::x86_64:
     return AMD64;
   case Triple::x86:
     return I386;
   case Triple::arm:
+  case Triple::thumb:
     return ARMNT;
   case Triple::aarch64:
     return ARM64;
@@ -1155,7 +1311,7 @@ void DLLFile::parse() {
   }
 }
 
-MachineTypes DLLFile::getMachineType() {
+MachineTypes DLLFile::getMachineType() const {
   if (coffObj)
     return static_cast<MachineTypes>(coffObj->getMachine());
   return IMAGE_FILE_MACHINE_UNKNOWN;

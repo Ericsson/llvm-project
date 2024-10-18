@@ -5,7 +5,7 @@
 func.func @affine_apply_operand_non_index(%arg0 : i32) {
   // Custom parser automatically assigns all arguments the `index` so we must
   // use the generic syntax here to exercise the verifier.
-  // expected-error@+1 {{op operand #0 must be index, but got 'i32'}}
+  // expected-error@+1 {{op operand #0 must be variadic of index, but got 'i32'}}
   %0 = "affine.apply"(%arg0) {map = affine_map<(d0) -> (d0)>} : (i32) -> (index)
   return
 }
@@ -55,7 +55,7 @@ func.func @affine_load_invalid_dim(%M : memref<10xi32>) {
   "unknown"() ({
   ^bb0(%arg: index):
     affine.load %M[%arg] : memref<10xi32>
-    // expected-error@-1 {{index must be a dimension or symbol identifier}}
+    // expected-error@-1 {{index must be a valid dimension or symbol identifier}}
     cf.br ^bb1
   ^bb1:
     cf.br ^bb1
@@ -178,6 +178,22 @@ func.func @affine_min(%arg0 : index, %arg1 : index, %arg2 : index) {
 
 // -----
 
+func.func @affine_min() {
+  // expected-error@+1 {{'affine.min' op affine map expect at least one result}}
+  %0 = affine.min affine_map<() -> ()> ()
+  return
+}
+
+// -----
+
+func.func @affine_min(%arg0 : index) {
+  // expected-error@+1 {{'affine.min' op affine map expect at least one result}}
+  %0 = affine.min affine_map<(d0) -> ()> (%arg0)
+  return
+}
+
+// -----
+
 func.func @affine_max(%arg0 : index, %arg1 : index, %arg2 : index) {
   // expected-error@+1 {{operand count and affine map dimension and symbol count must match}}
   %0 = affine.max affine_map<(d0) -> (d0)> (%arg0, %arg1)
@@ -200,6 +216,22 @@ func.func @affine_max(%arg0 : index, %arg1 : index, %arg2 : index) {
   // expected-error@+1 {{operand count and affine map dimension and symbol count must match}}
   %0 = affine.max affine_map<(d0) -> (d0)> ()
 
+  return
+}
+
+// -----
+
+func.func @affine_max() {
+  // expected-error@+1 {{'affine.max' op affine map expect at least one result}}
+  %0 = affine.max affine_map<() -> ()> ()
+  return
+}
+
+// -----
+
+func.func @affine_max(%arg0 : index) {
+  // expected-error@+1 {{'affine.max' op affine map expect at least one result}}
+  %0 = affine.max affine_map<(d0) -> ()> (%arg0)
   return
 }
 
@@ -521,7 +553,7 @@ func.func @dynamic_dimension_index() {
     %idx = "unknown.test"() : () -> (index)
     %memref = "unknown.test"() : () -> memref<?x?xf32>
     %dim = memref.dim %memref, %idx : memref<?x?xf32>
-    // expected-error @below {{op index must be a dimension or symbol identifier}}
+    // expected-error @below {{op index must be a valid dimension or symbol identifier}}
     affine.load %memref[%dim, %dim] : memref<?x?xf32>
     "unknown.terminator"() : () -> ()
   }) : () -> ()

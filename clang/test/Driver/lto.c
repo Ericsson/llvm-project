@@ -5,7 +5,7 @@
 // CHECK-COMPILE-ACTIONS: 2: compiler, {1}, ir
 // CHECK-COMPILE-ACTIONS: 3: backend, {2}, lto-bc
 
-// RUN: %clang -ccc-print-phases %s -flto 2> %t
+// RUN: %clang -ccc-print-phases %if target={{.*-windows-msvc.*}} %{ -fuse-ld=lld %} -flto %s 2> %t
 // RUN: FileCheck -check-prefix=CHECK-COMPILELINK-ACTIONS < %t %s
 //
 // CHECK-COMPILELINK-ACTIONS: 0: input, "{{.*}}lto.c", c
@@ -105,3 +105,12 @@
 // FLTO-THIN: -flto=thin
 // FLTO-THIN-NOT: "-flto"
 // FLTO-THIN-NOT: -flto=full
+
+// -flto passes along an explicit GlobalISel flag.
+// RUN: %clang --target=riscv64-linux-gnu -### %s -flto -fglobal-isel 2> %t
+// RUN: FileCheck --check-prefix=CHECK-GISEL < %t %s
+// RUN: %clang --target=aarch64-linux-gnu -### %s -flto -fno-global-isel 2> %t
+// RUN: FileCheck --check-prefix=CHECK-DISABLE-GISEL < %t %s
+//
+// CHECK-GISEL:         "-plugin-opt=-global-isel=1"
+// CHECK-DISABLE-GISEL: "-plugin-opt=-global-isel=0"

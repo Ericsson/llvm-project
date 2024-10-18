@@ -119,7 +119,7 @@ namespace llvm {
     }
 
     /// Override to support customized stack guard loading.
-    bool useLoadStackGuardNode() const override;
+    bool useLoadStackGuardNode(const Module &M) const override;
     void insertSSPDeclarations(Module &M) const override;
 
     /// getSetCCResultType - Return the ISD::SETCC ValueType
@@ -222,7 +222,10 @@ namespace llvm {
 
     MachineBasicBlock *expandSelectCC(MachineInstr &MI, MachineBasicBlock *BB,
                                       unsigned BROpcode) const;
+
+    void AdjustInstrPostInstrSelection(MachineInstr &MI,
+                                       SDNode *Node) const override;
   };
 } // end namespace llvm
 
-#endif    // SPARC_ISELLOWERING_H
+#endif // LLVM_LIB_TARGET_SPARC_SPARCISELLOWERING_H

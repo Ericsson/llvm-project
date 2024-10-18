@@ -103,6 +103,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/Analysis/AssumeBundleQueries.h"
 #include "llvm/Analysis/CFG.h"
@@ -122,6 +123,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Alignment.h"
@@ -132,6 +134,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/ModRef.h"
 #include "llvm/Support/TimeProfiler.h"
+#include "llvm/Support/TypeSize.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/CallGraphUpdater.h"
 
@@ -291,11 +294,16 @@ struct RangeTy {
     return *this;
   }
 
-  /// Comparison for sorting ranges by offset.
+  /// Comparison for sorting ranges.
   ///
-  /// Returns true if the offset \p L is less than that of \p R.
-  inline static bool OffsetLessThan(const RangeTy &L, const RangeTy &R) {
-    return L.Offset < R.Offset;
+  /// Returns true if the offset of \p L is less than that of \p R. If the two
+  /// offsets are same, compare the sizes instead.
+  inline static bool LessThan(const RangeTy &L, const RangeTy &R) {
+    if (L.Offset < R.Offset)
+      return true;
+    if (L.Offset == R.Offset)
+      return L.Size < R.Size;
+    return false;
   }
 
   /// Constants used to represent special offsets or sizes.
@@ -1155,6 +1163,12 @@ struct AnalysisGetter {
     return nullptr;
   }
 
+  /// Invalidates the analyses. Valid only when using the new pass manager.
+  void invalidateAnalyses() {
+    assert(FAM && "Can only be used from the new PM!");
+    FAM->clear();
+  }
+
   AnalysisGetter(FunctionAnalysisManager &FAM, bool CachedOnly = false)
       : FAM(&FAM), CachedOnly(CachedOnly) {}
   AnalysisGetter(Pass *P, bool CachedOnly = false)
@@ -1284,6 +1298,10 @@ struct InformationCache {
     return AssumeOnlyValues.contains(&I);
   }
 
+  /// Invalidates the cached analyses. Valid only when using the new pass
+  /// manager.
+  void invalidateAnalyses() { AG.invalidateAnalyses(); }
+
   /// Return the analysis result from a pass \p AP for function \p F.
   template <typename AP>
   typename AP::Result *getAnalysisResultForFunction(const Function &F,
@@ -1322,6 +1340,9 @@ struct InformationCache {
   /// closed world modules (see isClosedWorldModule).
   const ArrayRef<Function *>
   getIndirectlyCallableFunctions(Attributor &A) const;
+
+  /// Return the flat address space if the associated target has.
+  std::optional<unsigned> getFlatAddressSpace() const;
 
 private:
   struct FunctionInfo {
@@ -1435,7 +1456,7 @@ struct AttributorConfig {
   /// Callback function to determine if an indirect call targets should be made
   /// direct call targets (with an if-cascade).
   std::function<bool(Attributor &A, const AbstractAttribute &AA, CallBase &CB,
-                     Function &AssummedCallee)>
+                     Function &AssumedCallee, unsigned NumAssumedCallees)>
       IndirectCalleeSpecializationCallback = nullptr;
 
   /// Helper to update an underlying call graph and to delete functions.
@@ -1539,18 +1560,6 @@ struct Attributor {
                          const IRPosition &IRP, DepClassTy DepClass) {
     return getOrCreateAAFor<AAType>(IRP, &QueryingAA, DepClass,
                                     /* ForceUpdate */ false);
-  }
-
-  /// Similar to getAAFor but the return abstract attribute will be updated (via
-  /// `AbstractAttribute::update`) even if it is found in the cache. This is
-  /// especially useful for AAIsDead as changes in liveness can make updates
-  /// possible/useful that were not happening before as the abstract attribute
-  /// was assumed dead.
-  template <typename AAType>
-  const AAType *getAndUpdateAAFor(const AbstractAttribute &QueryingAA,
-                                  const IRPosition &IRP, DepClassTy DepClass) {
-    return getOrCreateAAFor<AAType>(IRP, &QueryingAA, DepClass,
-                                    /* ForceUpdate */ true);
   }
 
   /// The version of getAAFor that allows to omit a querying abstract
@@ -1717,10 +1726,11 @@ struct Attributor {
   /// Return true if we should specialize the call site \b CB for the potential
   /// callee \p Fn.
   bool shouldSpecializeCallSiteForCallee(const AbstractAttribute &AA,
-                                         CallBase &CB, Function &Callee) {
+                                         CallBase &CB, Function &Callee,
+                                         unsigned NumAssumedCallees) {
     return Configuration.IndirectCalleeSpecializationCallback
-               ? Configuration.IndirectCalleeSpecializationCallback(*this, AA,
-                                                                    CB, Callee)
+               ? Configuration.IndirectCalleeSpecializationCallback(
+                     *this, AA, CB, Callee, NumAssumedCallees)
                : true;
   }
 
@@ -1825,14 +1835,6 @@ struct Attributor {
       identifyDefaultAbstractAttributes(const_cast<Function &>(F));
     if (Configuration.InitializationCallback)
       Configuration.InitializationCallback(*this, F);
-  }
-
-  /// Helper function to remove callsite.
-  void removeCallSite(CallInst *CI) {
-    if (!CI)
-      return;
-
-    Configuration.CGUpdater.removeCallSite(*CI);
   }
 
   /// Record that \p U is to be replaces with \p NV after information was
@@ -2171,7 +2173,7 @@ public:
     Function *F = I->getFunction();
     auto &ORE = Configuration.OREGetter(F);
 
-    if (RemarkName.startswith("OMP"))
+    if (RemarkName.starts_with("OMP"))
       ORE.emit([&]() {
         return RemarkCB(RemarkKind(Configuration.PassName, RemarkName, I))
                << " [" << RemarkName << "]";
@@ -2191,7 +2193,7 @@ public:
 
     auto &ORE = Configuration.OREGetter(F);
 
-    if (RemarkName.startswith("OMP"))
+    if (RemarkName.starts_with("OMP"))
       ORE.emit([&]() {
         return RemarkCB(RemarkKind(Configuration.PassName, RemarkName, F))
                << " [" << RemarkName << "]";
@@ -2254,7 +2256,7 @@ public:
                             CalleeRepairCBTy &&CalleeRepairCB,
                             ACSRepairCBTy &&ACSRepairCB)
         : A(A), ReplacedFn(*Arg.getParent()), ReplacedArg(Arg),
-          ReplacementTypes(ReplacementTypes.begin(), ReplacementTypes.end()),
+          ReplacementTypes(ReplacementTypes),
           CalleeRepairCB(std::move(CalleeRepairCB)),
           ACSRepairCB(std::move(ACSRepairCB)) {}
 
@@ -5143,9 +5145,7 @@ struct DenormalFPMathState : public AbstractState {
       return Mode != Other.Mode || ModeF32 != Other.ModeF32;
     }
 
-    bool isValid() const {
-      return Mode.isValid() && ModeF32.isValid();
-    }
+    bool isValid() const { return Mode.isValid() && ModeF32.isValid(); }
 
     static DenormalMode::DenormalModeKind
     unionDenormalKind(DenormalMode::DenormalModeKind Callee,
@@ -5185,9 +5185,7 @@ struct DenormalFPMathState : public AbstractState {
   // state.
   DenormalState getAssumed() const { return Known; }
 
-  bool isValidState() const override {
-    return Known.isValid();
-  }
+  bool isValidState() const override { return Known.isValid(); }
 
   /// Return true if there are no dynamic components to the denormal mode worth
   /// specializing.
@@ -5198,9 +5196,7 @@ struct DenormalFPMathState : public AbstractState {
            Known.ModeF32.Output != DenormalMode::Dynamic;
   }
 
-  bool isAtFixpoint() const override {
-    return IsAtFixedpoint;
-  }
+  bool isAtFixpoint() const override { return IsAtFixedpoint; }
 
   ChangeStatus indicateFixpoint() {
     bool Changed = !IsAtFixedpoint;
@@ -5418,9 +5414,13 @@ struct AANoFPClass
     return false;
   }
 
-  /// Return true if we assume that the underlying value is nofpclass.
+  /// Return the underlying assumed nofpclass.
   FPClassTest getAssumedNoFPClass() const {
     return static_cast<FPClassTest>(getAssumed());
+  }
+  /// Return the underlying known nofpclass.
+  FPClassTest getKnownNoFPClass() const {
+    return static_cast<FPClassTest>(getKnown());
   }
 
   /// Create an abstract attribute view for the position \p IRP.
@@ -5786,6 +5786,53 @@ struct AAPointerInfo : public AbstractAttribute {
     AK_MUST_READ_WRITE = AK_MUST | AK_R | AK_W,
   };
 
+  /// A helper containing a list of offsets computed for a Use. Ideally this
+  /// list should be strictly ascending, but we ensure that only when we
+  /// actually translate the list of offsets to a RangeList.
+  struct OffsetInfo {
+    using VecTy = SmallSet<int64_t, 4>;
+    using const_iterator = VecTy::const_iterator;
+    VecTy Offsets;
+
+    const_iterator begin() const { return Offsets.begin(); }
+    const_iterator end() const { return Offsets.end(); }
+
+    bool operator==(const OffsetInfo &RHS) const {
+      return Offsets == RHS.Offsets;
+    }
+
+    bool operator!=(const OffsetInfo &RHS) const { return !(*this == RHS); }
+
+    bool insert(int64_t Offset) { return Offsets.insert(Offset).second; }
+    bool isUnassigned() const { return Offsets.size() == 0; }
+
+    bool isUnknown() const {
+      if (isUnassigned())
+        return false;
+      if (Offsets.size() == 1)
+        return *Offsets.begin() == AA::RangeTy::Unknown;
+      return false;
+    }
+
+    void setUnknown() {
+      Offsets.clear();
+      Offsets.insert(AA::RangeTy::Unknown);
+    }
+
+    void addToAll(int64_t Inc) {
+      VecTy NewOffsets;
+      for (auto &Offset : Offsets)
+        NewOffsets.insert(Offset + Inc);
+      Offsets = std::move(NewOffsets);
+    }
+
+    /// Copy offsets from \p R into the current list.
+    ///
+    /// Ideally all lists should be strictly ascending, but we defer that to the
+    /// actual use of the list. So we just blindly append here.
+    bool merge(const OffsetInfo &R) { return set_union(Offsets, R.Offsets); }
+  };
+
   /// A container for a list of ranges.
   struct RangeList {
     // The set of ranges rarely contains more than one element, and is unlikely
@@ -5817,7 +5864,7 @@ struct AAPointerInfo : public AbstractAttribute {
     // Helpers required for std::set_difference
     using value_type = RangeTy;
     void push_back(const RangeTy &R) {
-      assert((Ranges.empty() || RangeTy::OffsetLessThan(Ranges.back(), R)) &&
+      assert((Ranges.empty() || RangeTy::LessThan(Ranges.back(), R)) &&
              "Ensure the last element is the greatest.");
       Ranges.push_back(R);
     }
@@ -5826,7 +5873,7 @@ struct AAPointerInfo : public AbstractAttribute {
     static void set_difference(const RangeList &L, const RangeList &R,
                                RangeList &D) {
       std::set_difference(L.begin(), L.end(), R.begin(), R.end(),
-                          std::back_inserter(D), RangeTy::OffsetLessThan);
+                          std::back_inserter(D), RangeTy::LessThan);
     }
 
     unsigned size() const { return Ranges.size(); }
@@ -5864,7 +5911,7 @@ struct AAPointerInfo : public AbstractAttribute {
 
     /// Insert \p R at the given iterator \p Pos, and merge if necessary.
     ///
-    /// This assumes that all ranges before \p Pos are OffsetLessThan \p R, and
+    /// This assumes that all ranges before \p Pos are LessThan \p R, and
     /// then maintains the sorted order for the suffix list.
     ///
     /// \return The place of insertion and true iff anything changed.
@@ -5876,7 +5923,7 @@ struct AAPointerInfo : public AbstractAttribute {
       }
 
       // Maintain this as a sorted vector of unique entries.
-      auto LB = std::lower_bound(Pos, Ranges.end(), R, RangeTy::OffsetLessThan);
+      auto LB = std::lower_bound(Pos, Ranges.end(), R, RangeTy::LessThan);
       if (LB == Ranges.end() || LB->Offset != R.Offset)
         return std::make_pair(Ranges.insert(LB, R), true);
       bool Changed = *LB != R;
@@ -6117,6 +6164,14 @@ struct AAPointerInfo : public AbstractAttribute {
   /// See AbstractAttribute::getIdAddr()
   const char *getIdAddr() const override { return &ID; }
 
+  using OffsetBinsTy = DenseMap<AA::RangeTy, SmallSet<unsigned, 4>>;
+  using const_bin_iterator = OffsetBinsTy::const_iterator;
+  virtual const_bin_iterator begin() const = 0;
+  virtual const_bin_iterator end() const = 0;
+  virtual int64_t numOffsetBins() const = 0;
+  virtual bool reachesReturn() const = 0;
+  virtual void addReturnedOffsetsTo(OffsetInfo &) const = 0;
+
   /// Call \p CB on all accesses that might interfere with \p Range and return
   /// true if all such accesses were known and the callback returned true for
   /// all of them, false otherwise. An access interferes with an offset-size
@@ -6245,7 +6300,7 @@ struct AAAddressSpace : public StateWrapper<BooleanState, AbstractAttribute> {
   /// Return the address space of the associated value. \p NoAddressSpace is
   /// returned if the associated value is dead. This functions is not supposed
   /// to be called if the AA is invalid.
-  virtual int32_t getAddressSpace() const = 0;
+  virtual uint32_t getAddressSpace() const = 0;
 
   /// Create an abstract attribute view for the position \p IRP.
   static AAAddressSpace &createForPosition(const IRPosition &IRP,
@@ -6263,10 +6318,46 @@ struct AAAddressSpace : public StateWrapper<BooleanState, AbstractAttribute> {
     return (AA->getIdAddr() == &ID);
   }
 
-  // No address space which indicates the associated value is dead.
-  static const int32_t NoAddressSpace = -1;
-
   /// Unique ID (due to the unique address)
+  static const char ID;
+
+protected:
+  // Invalid address space which indicates the associated value is dead.
+  static const uint32_t InvalidAddressSpace = ~0U;
+};
+
+struct AAAllocationInfo : public StateWrapper<BooleanState, AbstractAttribute> {
+  AAAllocationInfo(const IRPosition &IRP, Attributor &A)
+      : StateWrapper<BooleanState, AbstractAttribute>(IRP) {}
+
+  /// See AbstractAttribute::isValidIRPositionForInit
+  static bool isValidIRPositionForInit(Attributor &A, const IRPosition &IRP) {
+    if (!IRP.getAssociatedType()->isPtrOrPtrVectorTy())
+      return false;
+    return AbstractAttribute::isValidIRPositionForInit(A, IRP);
+  }
+
+  /// Create an abstract attribute view for the position \p IRP.
+  static AAAllocationInfo &createForPosition(const IRPosition &IRP,
+                                             Attributor &A);
+
+  virtual std::optional<TypeSize> getAllocatedSize() const = 0;
+
+  /// See AbstractAttribute::getName()
+  const std::string getName() const override { return "AAAllocationInfo"; }
+
+  /// See AbstractAttribute::getIdAddr()
+  const char *getIdAddr() const override { return &ID; }
+
+  /// This function should return true if the type of the \p AA is
+  /// AAAllocationInfo
+  static bool classof(const AbstractAttribute *AA) {
+    return (AA->getIdAddr() == &ID);
+  }
+
+  constexpr static const std::optional<TypeSize> HasNoAllocationSize =
+      std::optional<TypeSize>(TypeSize(-1, true));
+
   static const char ID;
 };
 

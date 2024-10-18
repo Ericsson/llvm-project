@@ -72,11 +72,14 @@ public:
   void AddLinkRuntimeLib(const llvm::opt::ArgList &Args,
                          llvm::opt::ArgStringList &CmdArgs) const;
   std::string computeSysRoot() const override;
+  SanitizerMask getSupportedSanitizers() const override;
 
 private:
   using OrderedMultilibs =
       llvm::iterator_range<llvm::SmallVector<Multilib>::const_reverse_iterator>;
   OrderedMultilibs getOrderedMultilibs() const;
+
+  std::string SysRoot;
 };
 
 } // namespace toolchains
@@ -98,7 +101,7 @@ public:
                     const char *LinkingOutput) const override;
 };
 
-class LLVM_LIBRARY_VISIBILITY Linker : public Tool {
+class LLVM_LIBRARY_VISIBILITY Linker final : public Tool {
 public:
   Linker(const ToolChain &TC) : Tool("baremetal::Linker", "ld.lld", TC) {}
   bool isLinkJob() const override { return true; }

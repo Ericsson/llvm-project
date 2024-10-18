@@ -29,6 +29,7 @@ class LinalgStructuredBase_Op<string mnemonic, list<Trait> props>
   : Op<Linalg_Dialect, mnemonic, !listconcat([
        SingleBlockImplicitTerminator<"YieldOp">,
        DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+       DeclareOpInterfaceMethods<ConditionallySpeculatable>,
        DestinationStyleOpInterface,
        LinalgStructuredInterface,
        ReifyRankedShapedTypeOpInterface], props)> {
@@ -209,6 +210,24 @@ def GenericOp : LinalgStructuredBase_Op<"generic", [
     }
 
     MutableOperandRange getDpsInitsMutable() { return getOutputsMutable(); }
+
+    // Return true only if GenericOp has a single input and single
+    // output, and the body is a single yieldOp that yields the input.
+    // This check is useful when trying to determine if the op is
+    // essentially a transpose, broadcast, copy or something like that.
+    bool isSingleYieldOp() {
+      if (!isSingleInputOutput())
+        return false;
+     Block *body = getBody();
+     if (body->getOperations().size() != 1)
+       return false;
+
+     auto yieldOp = dyn_cast<linalg::YieldOp>(body->back());
+       if (!yieldOp || yieldOp.getNumOperands() != 1 ||
+           yieldOp->getOperand(0) != body->getArgument(0))
+         return false;
+     return true;
+   }
   }];
 
   let hasCanonicalizer = 1;
@@ -245,7 +264,7 @@ def MapOp : LinalgStructuredBase_Op<"map", [
           }
     ```
 
-    Shortened print form is available. Applies to simple maps with one 
+    Shortened print form is available. Applies to simple maps with one
     non-yield operation inside the body.
 
     The example above will be printed as:
@@ -391,7 +410,6 @@ def ReduceOp : LinalgStructuredBase_Op<"reduce", [
 
 def TransposeOp : LinalgStructuredBase_Op<"transpose", [
     DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>,
-    SameVariadicOperandSize,
     SingleBlockImplicitTerminator<"YieldOp">]> {
   let summary = "Transpose operator";
   let description = [{
@@ -442,16 +460,24 @@ def TransposeOp : LinalgStructuredBase_Op<"transpose", [
     // Implement functions necessary for DestinationStyleOpInterface.
     MutableOperandRange getDpsInitsMutable() { return getInitMutable(); }
 
+    static void regionBuilder(mlir::ImplicitLocOpBuilder &b, mlir::Block &block,
+        mlir::ArrayRef<mlir::NamedAttribute>) {
+      OpBuilder::InsertionGuard guard(b);
+      b.create<linalg::YieldOp>(b.getLoc(), block.getArgument(0));
+    }
+
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
         mlir::ArrayRef<mlir::NamedAttribute>)>
       getRegionBuilder() {
-      return nullptr;
+      return regionBuilder;
     }
 
     static void createRegion(::mlir::OpBuilder &opBuilder,
                              ::mlir::OperationState & odsState);
   }];
 
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
@@ -463,7 +489,6 @@ def TransposeOp : LinalgStructuredBase_Op<"transpose", [
 
 def BroadcastOp : LinalgStructuredBase_Op<"broadcast", [
     DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>,
-    SameVariadicOperandSize,
     SingleBlockImplicitTerminator<"YieldOp">]> {
   let summary = "Static broadcast operator";
   let description = [{
@@ -473,7 +498,7 @@ def BroadcastOp : LinalgStructuredBase_Op<"broadcast", [
     ```
       %bcast = linalg.broadcast
           ins(%input:tensor<16xf32>)
-          inits(%init:tensor<16x64xf32>)
+          outs(%init:tensor<16x64xf32>)
           dimensions = [1]
     ```
   }];
@@ -510,15 +535,22 @@ def BroadcastOp : LinalgStructuredBase_Op<"broadcast", [
     // Implement functions necessary for DestinationStyleOpInterface.
     MutableOperandRange getDpsInitsMutable() { return getInitMutable(); }
 
+    static void regionBuilder(mlir::ImplicitLocOpBuilder &b, mlir::Block &block,
+        mlir::ArrayRef<mlir::NamedAttribute>) {
+      OpBuilder::InsertionGuard guard(b);
+      b.create<linalg::YieldOp>(b.getLoc(), block.getArgument(0));
+    }
+
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
         mlir::ArrayRef<mlir::NamedAttribute>)>
       getRegionBuilder() {
-      return nullptr;
+      return regionBuilder;
     }
   }];
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 //===----------------------------------------------------------------------===//

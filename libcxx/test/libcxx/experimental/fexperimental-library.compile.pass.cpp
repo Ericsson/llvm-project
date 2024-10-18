@@ -20,10 +20,10 @@
 #  error "-fexperimental-library should enable the PSTL"
 #endif
 
-#ifdef _LIBCPP_HAS_NO_EXPERIMENTAL_STOP_TOKEN
-#  error "-fexperimental-library should enable the stop_token"
+#ifdef _LIBCPP_HAS_NO_EXPERIMENTAL_TZDB
+#  error "-fexperimental-library should enable the chrono TZDB"
 #endif
 
-#ifdef _LIBCPP_HAS_NO_INCOMPLETE_TZDB
-#  error "-fexperimental-library should enable the chrono TZDB"
+#ifdef _LIBCPP_HAS_NO_EXPERIMENTAL_SYNCSTREAM
+#  error "-fexperimental-library should enable the syncstream header"
 #endif

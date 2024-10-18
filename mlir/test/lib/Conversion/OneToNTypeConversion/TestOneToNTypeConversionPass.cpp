@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestDialect.h"
+#include "TestOps.h"
 #include "mlir/Dialect/Func/Transforms/OneToNFuncConversions.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Pass/Pass.h"
@@ -128,8 +129,9 @@ public:
 
 } // namespace
 
-static void populateDecomposeTuplesTestPatterns(TypeConverter &typeConverter,
-                                                RewritePatternSet &patterns) {
+static void
+populateDecomposeTuplesTestPatterns(const TypeConverter &typeConverter,
+                                    RewritePatternSet &patterns) {
   patterns.add<
       // clang-format off
       ConvertMakeTupleOp,

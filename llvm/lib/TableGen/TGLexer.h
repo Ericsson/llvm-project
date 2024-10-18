@@ -80,7 +80,6 @@ enum TokKind {
   Code,
   Dag,
   ElseKW,
-  FalseKW,
   Field,
   In,
   Include,
@@ -88,7 +87,6 @@ enum TokKind {
   List,
   String,
   Then,
-  TrueKW,
 
   // Object start tokens.
   OBJECT_START_FIRST,
@@ -97,7 +95,9 @@ enum TokKind {
   Def,
   Defm,
   Defset,
+  Deftype,
   Defvar,
+  Dump,
   Foreach,
   If,
   Let,
@@ -120,6 +120,7 @@ enum TokKind {
   XSRL,
   XSHL,
   XListConcat,
+  XListFlatten,
   XListSplat,
   XStrConcat,
   XInterleave,
@@ -155,7 +156,8 @@ enum TokKind {
   XGetDagName,
   XSetDagArg,
   XSetDagName,
-  BANG_OPERATOR_LAST = XSetDagName,
+  XRepr,
+  BANG_OPERATOR_LAST = XRepr,
 
   // String valued tokens.
   STRING_VALUE_FIRST,
@@ -463,11 +465,6 @@ private:
   // symbol, buffer end or non-whitespace symbol following the preprocesing
   // directive.
   bool prepSkipDirectiveEnd();
-
-  // Skip all symbols to the end of the line/file.
-  // The method adjusts CurPtr, so that it points to either new line
-  // symbol in the current line or the buffer end.
-  void prepSkipToLineEnd();
 
   // Return true, if the current preprocessor control stack is such that
   // we should allow lexer to process the next token, false - otherwise.

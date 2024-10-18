@@ -13,7 +13,6 @@
 #ifndef LLVM_ANALYSIS_IVDESCRIPTORS_H
 #define LLVM_ANALYSIS_IVDESCRIPTORS_H
 
-#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -24,7 +23,6 @@ namespace llvm {
 class AssumptionCache;
 class DemandedBits;
 class DominatorTree;
-class Instruction;
 class Loop;
 class PredicatedScalarEvolution;
 class ScalarEvolution;
@@ -156,9 +154,6 @@ public:
   /// Returns a struct describing if the instruction is a
   /// Select(FCmp(X, Y), (Z = X op PHINode), PHINode) instruction pattern.
   static InstDesc isConditionalRdxPattern(RecurKind Kind, Instruction *I);
-
-  /// Returns identity corresponding to the RecurrenceKind.
-  Value *getRecurrenceIdentity(RecurKind K, Type *Tp, FastMathFlags FMF) const;
 
   /// Returns the opcode corresponding to the RecurrenceKind.
   static unsigned getOpcode(RecurKind Kind);

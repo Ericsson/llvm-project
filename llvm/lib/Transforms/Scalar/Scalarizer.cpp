@@ -18,6 +18,7 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/VectorUtils.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
@@ -37,9 +38,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/InitializePasses.h"
-#include "llvm/Pass.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <cassert>
 #include <cstdint>
@@ -50,28 +49,6 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "scalarizer"
-
-static cl::opt<bool> ClScalarizeVariableInsertExtract(
-    "scalarize-variable-insert-extract", cl::init(true), cl::Hidden,
-    cl::desc("Allow the scalarizer pass to scalarize "
-             "insertelement/extractelement with variable index"));
-
-// This is disabled by default because having separate loads and stores
-// makes it more likely that the -combiner-alias-analysis limits will be
-// reached.
-static cl::opt<bool> ClScalarizeLoadStore(
-    "scalarize-load-store", cl::init(false), cl::Hidden,
-    cl::desc("Allow the scalarizer pass to scalarize loads and store"));
-
-// Split vectors larger than this size into fragments, where each fragment is
-// either a vector no larger than this size or a scalar.
-//
-// Instructions with operands or results of different sizes that would be split
-// into a different number of fragments are currently left as-is.
-static cl::opt<unsigned> ClScalarizeMinBits(
-    "scalarize-min-bits", cl::init(0), cl::Hidden,
-    cl::desc("Instruct the scalarizer pass to attempt to keep values of a "
-             "minimum number of bits"));
 
 namespace {
 
@@ -273,27 +250,18 @@ static Value *concatenate(IRBuilder<> &Builder, ArrayRef<Value *> Fragments,
   return Res;
 }
 
-template <typename T>
-T getWithDefaultOverride(const cl::opt<T> &ClOption,
-                         const std::optional<T> &DefaultOverride) {
-  return ClOption.getNumOccurrences() ? ClOption
-                                      : DefaultOverride.value_or(ClOption);
-}
-
 class ScalarizerVisitor : public InstVisitor<ScalarizerVisitor, bool> {
 public:
-  ScalarizerVisitor(unsigned ParallelLoopAccessMDKind, DominatorTree *DT,
+  ScalarizerVisitor(DominatorTree *DT, const TargetTransformInfo *TTI,
                     ScalarizerPassOptions Options)
-      : ParallelLoopAccessMDKind(ParallelLoopAccessMDKind), DT(DT),
-        ScalarizeVariableInsertExtract(
-            getWithDefaultOverride(ClScalarizeVariableInsertExtract,
-                                   Options.ScalarizeVariableInsertExtract)),
-        ScalarizeLoadStore(getWithDefaultOverride(ClScalarizeLoadStore,
-                                                  Options.ScalarizeLoadStore)),
-        ScalarizeMinBits(getWithDefaultOverride(ClScalarizeMinBits,
-                                                Options.ScalarizeMinBits)) {}
+      : DT(DT), TTI(TTI),
+        ScalarizeVariableInsertExtract(Options.ScalarizeVariableInsertExtract),
+        ScalarizeLoadStore(Options.ScalarizeLoadStore),
+        ScalarizeMinBits(Options.ScalarizeMinBits) {}
 
   bool visit(Function &F);
+
+  bool isTriviallyScalarizable(Intrinsic::ID ID);
 
   // InstVisitor methods.  They return true if the instruction was scalarized,
   // false if nothing changed.
@@ -337,9 +305,8 @@ private:
 
   SmallVector<WeakTrackingVH, 32> PotentiallyDeadInstrs;
 
-  unsigned ParallelLoopAccessMDKind;
-
   DominatorTree *DT;
+  const TargetTransformInfo *TTI;
 
   const bool ScalarizeVariableInsertExtract;
   const bool ScalarizeLoadStore;
@@ -349,20 +316,23 @@ private:
 class ScalarizerLegacyPass : public FunctionPass {
 public:
   static char ID;
-
-  ScalarizerLegacyPass() : FunctionPass(ID) {
-    initializeScalarizerLegacyPassPass(*PassRegistry::getPassRegistry());
-  }
-
+  ScalarizerPassOptions Options;
+  ScalarizerLegacyPass() : FunctionPass(ID), Options() {}
+  ScalarizerLegacyPass(const ScalarizerPassOptions &Options);
   bool runOnFunction(Function &F) override;
-
-  void getAnalysisUsage(AnalysisUsage& AU) const override {
-    AU.addRequired<DominatorTreeWrapperPass>();
-    AU.addPreserved<DominatorTreeWrapperPass>();
-  }
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 
 } // end anonymous namespace
+
+ScalarizerLegacyPass::ScalarizerLegacyPass(const ScalarizerPassOptions &Options)
+    : FunctionPass(ID), Options(Options) {}
+
+void ScalarizerLegacyPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<TargetTransformInfoWrapperPass>();
+  AU.addPreserved<DominatorTreeWrapperPass>();
+}
 
 char ScalarizerLegacyPass::ID = 0;
 INITIALIZE_PASS_BEGIN(ScalarizerLegacyPass, "scalarizer",
@@ -447,16 +417,15 @@ bool ScalarizerLegacyPass::runOnFunction(Function &F) {
   if (skipFunction(F))
     return false;
 
-  Module &M = *F.getParent();
-  unsigned ParallelLoopAccessMDKind =
-      M.getContext().getMDKindID("llvm.mem.parallel_loop_access");
   DominatorTree *DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  ScalarizerVisitor Impl(ParallelLoopAccessMDKind, DT, ScalarizerPassOptions());
+  const TargetTransformInfo *TTI =
+      &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
+  ScalarizerVisitor Impl(DT, TTI, Options);
   return Impl.visit(F);
 }
 
-FunctionPass *llvm::createScalarizerPass() {
-  return new ScalarizerLegacyPass();
+FunctionPass *llvm::createScalarizerPass(const ScalarizerPassOptions &Options) {
+  return new ScalarizerLegacyPass(Options);
 }
 
 bool ScalarizerVisitor::visit(Function &F) {
@@ -558,7 +527,7 @@ bool ScalarizerVisitor::canTransferMetadata(unsigned Tag) {
           || Tag == LLVMContext::MD_invariant_load
           || Tag == LLVMContext::MD_alias_scope
           || Tag == LLVMContext::MD_noalias
-          || Tag == ParallelLoopAccessMDKind
+          || Tag == LLVMContext::MD_mem_parallel_loop_access
           || Tag == LLVMContext::MD_access_group);
 }
 
@@ -568,8 +537,8 @@ void ScalarizerVisitor::transferMetadataAndIRFlags(Instruction *Op,
                                                    const ValueVector &CV) {
   SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
   Op->getAllMetadataOtherThanDebugLoc(MDs);
-  for (unsigned I = 0, E = CV.size(); I != E; ++I) {
-    if (Instruction *New = dyn_cast<Instruction>(CV[I])) {
+  for (Value *V : CV) {
+    if (Instruction *New = dyn_cast<Instruction>(V)) {
       for (const auto &MD : MDs)
         if (canTransferMetadata(MD.first))
           New->setMetadata(MD.first, MD.second);
@@ -695,8 +664,11 @@ bool ScalarizerVisitor::splitBinary(Instruction &I, const Splitter &Split) {
   return true;
 }
 
-static bool isTriviallyScalariable(Intrinsic::ID ID) {
-  return isTriviallyVectorizable(ID);
+bool ScalarizerVisitor::isTriviallyScalarizable(Intrinsic::ID ID) {
+  if (isTriviallyVectorizable(ID))
+    return true;
+  return Intrinsic::isTargetIntrinsic(ID) &&
+         TTI->isTargetIntrinsicTriviallyScalarizable(ID);
 }
 
 /// If a call to a vector typed intrinsic function, split into a scalar call per
@@ -711,7 +683,8 @@ bool ScalarizerVisitor::splitCall(CallInst &CI) {
     return false;
 
   Intrinsic::ID ID = F->getIntrinsicID();
-  if (ID == Intrinsic::not_intrinsic || !isTriviallyScalariable(ID))
+
+  if (ID == Intrinsic::not_intrinsic || !isTriviallyScalarizable(ID))
     return false;
 
   // unsigned NumElems = VT->getNumElements();
@@ -760,7 +733,8 @@ bool ScalarizerVisitor::splitCall(CallInst &CI) {
   ValueVector Res(VS->NumFragments);
   ValueVector ScalarCallOps(NumArgs);
 
-  Function *NewIntrin = Intrinsic::getDeclaration(F->getParent(), ID, Tys);
+  Function *NewIntrin =
+      Intrinsic::getOrInsertDeclaration(F->getParent(), ID, Tys);
   IRBuilder<> Builder(&CI);
 
   // Perform actual scalarization, taking care to preserve any scalar operands.
@@ -772,7 +746,8 @@ bool ScalarizerVisitor::splitCall(CallInst &CI) {
       Tys[0] = VS->RemainderTy;
 
     for (unsigned J = 0; J != NumArgs; ++J) {
-      if (isVectorIntrinsicWithScalarOpAtArg(ID, J)) {
+      if (isVectorIntrinsicWithScalarOpAtArg(ID, J) ||
+          TTI->isTargetIntrinsicWithScalarOpAtArg(ID, J)) {
         ScalarCallOps.push_back(ScalarOperands[J]);
       } else {
         ScalarCallOps.push_back(Scattered[J][I]);
@@ -782,7 +757,7 @@ bool ScalarizerVisitor::splitCall(CallInst &CI) {
     }
 
     if (IsRemainder)
-      NewIntrin = Intrinsic::getDeclaration(F->getParent(), ID, Tys);
+      NewIntrin = Intrinsic::getOrInsertDeclaration(F->getParent(), ID, Tys);
 
     Res[I] = Builder.CreateCall(NewIntrin, ScalarCallOps,
                                 CI.getName() + ".i" + Twine(I));
@@ -1152,7 +1127,7 @@ bool ScalarizerVisitor::visitLoadInst(LoadInst &LI) {
     return false;
 
   std::optional<VectorLayout> Layout = getVectorLayout(
-      LI.getType(), LI.getAlign(), LI.getModule()->getDataLayout());
+      LI.getType(), LI.getAlign(), LI.getDataLayout());
   if (!Layout)
     return false;
 
@@ -1178,7 +1153,7 @@ bool ScalarizerVisitor::visitStoreInst(StoreInst &SI) {
 
   Value *FullValue = SI.getValueOperand();
   std::optional<VectorLayout> Layout = getVectorLayout(
-      FullValue->getType(), SI.getAlign(), SI.getModule()->getDataLayout());
+      FullValue->getType(), SI.getAlign(), SI.getDataLayout());
   if (!Layout)
     return false;
 
@@ -1254,11 +1229,9 @@ bool ScalarizerVisitor::finish() {
 }
 
 PreservedAnalyses ScalarizerPass::run(Function &F, FunctionAnalysisManager &AM) {
-  Module &M = *F.getParent();
-  unsigned ParallelLoopAccessMDKind =
-      M.getContext().getMDKindID("llvm.mem.parallel_loop_access");
   DominatorTree *DT = &AM.getResult<DominatorTreeAnalysis>(F);
-  ScalarizerVisitor Impl(ParallelLoopAccessMDKind, DT, Options);
+  const TargetTransformInfo *TTI = &AM.getResult<TargetIRAnalysis>(F);
+  ScalarizerVisitor Impl(DT, TTI, Options);
   bool Changed = Impl.visit(F);
   PreservedAnalyses PA;
   PA.preserve<DominatorTreeAnalysis>();

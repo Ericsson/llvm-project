@@ -58,10 +58,19 @@ inline StringRef toStringRef(bool B) { return StringRef(B ? "true" : "false"); }
 inline StringRef toStringRef(ArrayRef<uint8_t> Input) {
   return StringRef(reinterpret_cast<const char *>(Input.begin()), Input.size());
 }
+inline StringRef toStringRef(ArrayRef<char> Input) {
+  return StringRef(Input.begin(), Input.size());
+}
 
 /// Construct a string ref from an array ref of unsigned chars.
-inline ArrayRef<uint8_t> arrayRefFromStringRef(StringRef Input) {
-  return {Input.bytes_begin(), Input.bytes_end()};
+template <class CharT = uint8_t>
+inline ArrayRef<CharT> arrayRefFromStringRef(StringRef Input) {
+  static_assert(std::is_same<CharT, char>::value ||
+                    std::is_same<CharT, unsigned char>::value ||
+                    std::is_same<CharT, signed char>::value,
+                "Expected byte type");
+  return ArrayRef<CharT>(reinterpret_cast<const CharT *>(Input.data()),
+                         Input.size());
 }
 
 /// Interpret the given character \p C as a hexadecimal digit and return its
@@ -129,6 +138,17 @@ inline bool isASCII(llvm::StringRef S) {
 inline bool isPrint(char C) {
   unsigned char UC = static_cast<unsigned char>(C);
   return (0x20 <= UC) && (UC <= 0x7E);
+}
+
+/// Checks whether character \p C is a punctuation character.
+///
+/// Locale-independent version of the C standard library ispunct. The list of
+/// punctuation characters can be found in the documentation of std::ispunct:
+/// https://en.cppreference.com/w/cpp/string/byte/ispunct.
+inline bool isPunct(char C) {
+  static constexpr StringLiteral Punctuations =
+      R"(!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~)";
+  return Punctuations.contains(C);
 }
 
 /// Checks whether character \p C is whitespace in the "C" locale.
@@ -320,10 +340,12 @@ inline std::string itostr(int64_t X) {
 }
 
 inline std::string toString(const APInt &I, unsigned Radix, bool Signed,
-                            bool formatAsCLiteral = false) {
+                            bool formatAsCLiteral = false,
+                            bool UpperCase = true,
+                            bool InsertSeparators = false) {
   SmallString<40> S;
-  I.toString(S, Radix, Signed, formatAsCLiteral);
-  return std::string(S.str());
+  I.toString(S, Radix, Signed, formatAsCLiteral, UpperCase, InsertSeparators);
+  return std::string(S);
 }
 
 inline std::string toString(const APSInt &I, unsigned Radix) {

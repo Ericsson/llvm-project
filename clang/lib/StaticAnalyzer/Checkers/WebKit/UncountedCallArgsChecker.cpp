@@ -19,6 +19,7 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include <optional>
 
 using namespace clang;
@@ -33,6 +34,8 @@ class UncountedCallArgsChecker
             "WebKit coding guidelines"};
   mutable BugReporter *BR;
 
+  TrivialFunctionAnalysis TFA;
+
 public:
 
   void checkASTDecl(const TranslationUnitDecl *TUD, AnalysisManager &MGR,
@@ -43,7 +46,11 @@ public:
     // visit template instantiations or lambda classes. We
     // want to visit those, so we make our own RecursiveASTVisitor.
     struct LocalVisitor : public RecursiveASTVisitor<LocalVisitor> {
+      using Base = RecursiveASTVisitor<LocalVisitor>;
+
       const UncountedCallArgsChecker *Checker;
+      Decl *DeclWithIssue{nullptr};
+
       explicit LocalVisitor(const UncountedCallArgsChecker *Checker)
           : Checker(Checker) {
         assert(Checker);
@@ -52,8 +59,21 @@ public:
       bool shouldVisitTemplateInstantiations() const { return true; }
       bool shouldVisitImplicitCode() const { return false; }
 
+      bool TraverseClassTemplateDecl(ClassTemplateDecl *Decl) {
+        if (isRefType(safeGetName(Decl)))
+          return true;
+        return Base::TraverseClassTemplateDecl(Decl);
+      }
+
+      bool TraverseDecl(Decl *D) {
+        llvm::SaveAndRestore SavedDecl(DeclWithIssue);
+        if (D && (isa<FunctionDecl>(D) || isa<ObjCMethodDecl>(D)))
+          DeclWithIssue = D;
+        return Base::TraverseDecl(D);
+      }
+
       bool VisitCallExpr(const CallExpr *CE) {
-        Checker->visitCallExpr(CE);
+        Checker->visitCallExpr(CE, DeclWithIssue);
         return true;
       }
     };
@@ -62,7 +82,7 @@ public:
     visitor.TraverseDecl(const_cast<TranslationUnitDecl *>(TUD));
   }
 
-  void visitCallExpr(const CallExpr *CE) const {
+  void visitCallExpr(const CallExpr *CE, const Decl *D) const {
     if (shouldSkipCall(CE))
       return;
 
@@ -70,6 +90,19 @@ public:
       // Skip the first argument for overloaded member operators (e. g. lambda
       // or std::function call operator).
       unsigned ArgIdx = isa<CXXOperatorCallExpr>(CE) && isa_and_nonnull<CXXMethodDecl>(F);
+
+      if (auto *MemberCallExpr = dyn_cast<CXXMemberCallExpr>(CE)) {
+        if (auto *MD = MemberCallExpr->getMethodDecl()) {
+          auto name = safeGetName(MD);
+          if (name == "ref" || name == "deref")
+            return;
+        }
+        auto *E = MemberCallExpr->getImplicitObjectArgument();
+        QualType ArgType = MemberCallExpr->getObjectType().getCanonicalType();
+        std::optional<bool> IsUncounted = isUncounted(ArgType);
+        if (IsUncounted && *IsUncounted && !isPtrOriginSafe(E))
+          reportBugOnThis(E, D);
+      }
 
       for (auto P = F->param_begin();
            // FIXME: Also check variadic function parameters.
@@ -81,10 +114,7 @@ public:
         // if ((*P)->hasAttr<SafeRefCntblRawPtrAttr>())
         //  continue;
 
-        const auto *ArgType = (*P)->getType().getTypePtrOrNull();
-        if (!ArgType)
-          continue; // FIXME? Should we bail?
-
+        QualType ArgType = (*P)->getType().getCanonicalType();
         // FIXME: more complex types (arrays, references to raw pointers, etc)
         std::optional<bool> IsUncounted = isUncountedPtr(ArgType);
         if (!IsUncounted || !(*IsUncounted))
@@ -92,33 +122,46 @@ public:
 
         const auto *Arg = CE->getArg(ArgIdx);
 
-        std::pair<const clang::Expr *, bool> ArgOrigin =
-            tryToFindPtrOrigin(Arg, true);
+        if (auto *defaultArg = dyn_cast<CXXDefaultArgExpr>(Arg))
+          Arg = defaultArg->getExpr();
 
-        // Temporary ref-counted object created as part of the call argument
-        // would outlive the call.
-        if (ArgOrigin.second)
+        if (isPtrOriginSafe(Arg))
           continue;
 
-        if (isa<CXXNullPtrLiteralExpr>(ArgOrigin.first)) {
-          // foo(nullptr)
-          continue;
-        }
-        if (isa<IntegerLiteral>(ArgOrigin.first)) {
-          // FIXME: Check the value.
-          // foo(NULL)
-          continue;
-        }
-
-        if (isASafeCallArg(ArgOrigin.first))
-          continue;
-
-        reportBug(Arg, *P);
+        reportBug(Arg, *P, D);
       }
     }
   }
 
+  bool isPtrOriginSafe(const Expr *Arg) const {
+    return tryToFindPtrOrigin(Arg, /*StopAtFirstRefCountedObj=*/true,
+                              [](const clang::Expr *ArgOrigin, bool IsSafe) {
+                                if (IsSafe)
+                                  return true;
+                                if (isa<CXXNullPtrLiteralExpr>(ArgOrigin)) {
+                                  // foo(nullptr)
+                                  return true;
+                                }
+                                if (isa<IntegerLiteral>(ArgOrigin)) {
+                                  // FIXME: Check the value.
+                                  // foo(NULL)
+                                  return true;
+                                }
+                                if (isASafeCallArg(ArgOrigin))
+                                  return true;
+                                return false;
+                              });
+  }
+
   bool shouldSkipCall(const CallExpr *CE) const {
+    const auto *Callee = CE->getDirectCallee();
+
+    if (BR->getSourceManager().isInSystemHeader(CE->getExprLoc()))
+      return true;
+
+    if (Callee && TFA.isTrivial(Callee))
+      return true;
+
     if (CE->getNumArgs() == 0)
       return false;
 
@@ -126,13 +169,25 @@ public:
     // of object on LHS.
     if (auto *MemberOp = dyn_cast<CXXOperatorCallExpr>(CE)) {
       // Note: assignemnt to built-in type isn't derived from CallExpr.
+      if (MemberOp->getOperator() ==
+          OO_Equal) { // Ignore assignment to Ref/RefPtr.
+        auto *callee = MemberOp->getDirectCallee();
+        if (auto *calleeDecl = dyn_cast<CXXMethodDecl>(callee)) {
+          if (const CXXRecordDecl *classDecl = calleeDecl->getParent()) {
+            if (isRefCounted(classDecl))
+              return true;
+          }
+        }
+      }
       if (MemberOp->isAssignmentOp())
         return false;
     }
 
-    const auto *Callee = CE->getDirectCallee();
     if (!Callee)
       return false;
+
+    if (isMethodOnWTFContainerType(Callee))
+      return true;
 
     auto overloadedOperatorType = Callee->getOverloadedOperator();
     if (overloadedOperatorType == OO_EqualEqual ||
@@ -149,19 +204,53 @@ public:
 
     auto name = safeGetName(Callee);
     if (name == "adoptRef" || name == "getPtr" || name == "WeakPtr" ||
-        name == "makeWeakPtr" || name == "downcast" || name == "bitwise_cast" ||
-        name == "is" || name == "equal" || name == "hash" ||
-        name == "isType"
+        name == "dynamicDowncast" || name == "downcast" ||
+        name == "checkedDowncast" || name == "uncheckedDowncast" ||
+        name == "bitwise_cast" || name == "is" || name == "equal" ||
+        name == "hash" || name == "isType" ||
         // FIXME: Most/all of these should be implemented via attributes.
-        || name == "equalIgnoringASCIICase" ||
+        name == "equalIgnoringASCIICase" ||
         name == "equalIgnoringASCIICaseCommon" ||
-        name == "equalIgnoringNullity")
+        name == "equalIgnoringNullity" || name == "toString")
       return true;
 
     return false;
   }
 
-  void reportBug(const Expr *CallArg, const ParmVarDecl *Param) const {
+  bool isMethodOnWTFContainerType(const FunctionDecl *Decl) const {
+    if (!isa<CXXMethodDecl>(Decl))
+      return false;
+    auto *ClassDecl = Decl->getParent();
+    if (!ClassDecl || !isa<CXXRecordDecl>(ClassDecl))
+      return false;
+
+    auto *NsDecl = ClassDecl->getParent();
+    if (!NsDecl || !isa<NamespaceDecl>(NsDecl))
+      return false;
+
+    auto MethodName = safeGetName(Decl);
+    auto ClsNameStr = safeGetName(ClassDecl);
+    StringRef ClsName = ClsNameStr; // FIXME: Make safeGetName return StringRef.
+    auto NamespaceName = safeGetName(NsDecl);
+    // FIXME: These should be implemented via attributes.
+    return NamespaceName == "WTF" &&
+           (MethodName == "find" || MethodName == "findIf" ||
+            MethodName == "reverseFind" || MethodName == "reverseFindIf" ||
+            MethodName == "findIgnoringASCIICase" || MethodName == "get" ||
+            MethodName == "inlineGet" || MethodName == "contains" ||
+            MethodName == "containsIf" ||
+            MethodName == "containsIgnoringASCIICase" ||
+            MethodName == "startsWith" || MethodName == "endsWith" ||
+            MethodName == "startsWithIgnoringASCIICase" ||
+            MethodName == "endsWithIgnoringASCIICase" ||
+            MethodName == "substring") &&
+           (ClsName.ends_with("Vector") || ClsName.ends_with("Set") ||
+            ClsName.ends_with("Map") || ClsName == "StringImpl" ||
+            ClsName.ends_with("String"));
+  }
+
+  void reportBug(const Expr *CallArg, const ParmVarDecl *Param,
+                 const Decl *DeclWithIssue) const {
     assert(CallArg);
 
     SmallString<100> Buf;
@@ -182,6 +271,21 @@ public:
     PathDiagnosticLocation BSLoc(SrcLocToReport, BR->getSourceManager());
     auto Report = std::make_unique<BasicBugReport>(Bug, Os.str(), BSLoc);
     Report->addRange(CallArg->getSourceRange());
+    Report->setDeclWithIssue(DeclWithIssue);
+    BR->emitReport(std::move(Report));
+  }
+
+  void reportBugOnThis(const Expr *CallArg, const Decl *DeclWithIssue) const {
+    assert(CallArg);
+
+    const SourceLocation SrcLocToReport = CallArg->getSourceRange().getBegin();
+
+    PathDiagnosticLocation BSLoc(SrcLocToReport, BR->getSourceManager());
+    auto Report = std::make_unique<BasicBugReport>(
+        Bug, "Call argument for 'this' parameter is uncounted and unsafe.",
+        BSLoc);
+    Report->addRange(CallArg->getSourceRange());
+    Report->setDeclWithIssue(DeclWithIssue);
     BR->emitReport(std::move(Report));
   }
 };

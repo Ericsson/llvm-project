@@ -101,6 +101,8 @@ public:
 
   std::unique_ptr<llvm::TarWriter> tar; // for /linkrepro
 
+  void pullArm64ECIcallHelper();
+
 private:
   // Searches a file from search paths.
   std::optional<StringRef> findFileIfNew(StringRef filename);
@@ -170,6 +172,8 @@ private:
 
   Symbol *addUndefined(StringRef sym);
 
+  void addUndefinedGlob(StringRef arg);
+
   StringRef mangleMaybe(Symbol *s);
 
   // Windows specific -- "main" is not the only main function in Windows.
@@ -233,6 +237,9 @@ private:
   // Parses a string in the form of "[:<integer>]"
   void parseFunctionPadMin(llvm::opt::Arg *a);
 
+  // Parses a string in the form of "[:<integer>]"
+  void parseDependentLoadFlags(llvm::opt::Arg *a);
+
   // Parses a string in the form of "EMBED[,=<integer>]|NO".
   void parseManifest(StringRef arg);
 
@@ -267,6 +274,10 @@ private:
   // Convert Windows resource files (.res files) to a .obj file.
   MemoryBufferRef convertResToCOFF(ArrayRef<MemoryBufferRef> mbs,
                                    ArrayRef<ObjFile *> objs);
+
+  // Create export thunks for exported and patchable Arm64EC function symbols.
+  void createECExportThunks();
+  void maybeCreateECExportThunk(StringRef name, Symbol *&sym);
 };
 
 // Create enum with OPT_xxx values for each option in Options.td

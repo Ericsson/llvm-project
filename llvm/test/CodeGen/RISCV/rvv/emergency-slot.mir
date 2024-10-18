@@ -83,7 +83,7 @@ body:             |
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION def_cfa $x8, 0
   ; CHECK-NEXT:   $x2 = frame-setup ADDI $x2, -272
   ; CHECK-NEXT:   $x10 = frame-setup PseudoReadVLENB
-  ; CHECK-NEXT:   $x11 = frame-setup ADDI $x0, 52
+  ; CHECK-NEXT:   $x11 = frame-setup ADDI $x0, 51
   ; CHECK-NEXT:   $x10 = frame-setup MUL killed $x10, killed $x11
   ; CHECK-NEXT:   $x2 = frame-setup SUB $x2, killed $x10
   ; CHECK-NEXT:   $x2 = frame-setup ANDI $x2, -128
@@ -139,7 +139,7 @@ body:             |
   ; CHECK-NEXT:   renamable $v0 = VL1RE8_V killed $x10 :: (load unknown-size from %stack.1, align 8)
   ; CHECK-NEXT:   $x10 = LD $x2, 8 :: (load (s64) from %stack.15)
   ; CHECK-NEXT:   renamable $v0 = PseudoVSLIDEDOWN_VX_M1 undef renamable $v0, killed renamable $v0, killed renamable $x13, $noreg, 3 /* e8 */, 1 /* ta, mu */, implicit $vl, implicit $vtype
-  ; CHECK-NEXT:   renamable $x13 = PseudoVMV_X_S_M1 killed renamable $v0, 3 /* e8 */, implicit $vl, implicit $vtype
+  ; CHECK-NEXT:   renamable $x13 = PseudoVMV_X_S killed renamable $v0, 3 /* e8 */, implicit $vl, implicit $vtype
   ; CHECK-NEXT:   BLT killed renamable $x16, renamable $x27, %bb.2
   ; CHECK-NEXT: {{  $}}
   ; CHECK-NEXT: bb.1:
@@ -150,9 +150,7 @@ body:             |
   ; CHECK-NEXT:   PseudoBR %bb.2
   ; CHECK-NEXT: {{  $}}
   ; CHECK-NEXT: bb.2:
-  ; CHECK-NEXT:   $x2 = frame-destroy ADDI $x8, -2048
-  ; CHECK-NEXT:   $x2 = frame-destroy ADDI killed $x2, -256
-  ; CHECK-NEXT:   $x2 = frame-destroy ADDI $x2, 272
+  ; CHECK-NEXT:   $x2 = frame-destroy ADDI $x8, -2032
   ; CHECK-NEXT:   $x1 = LD $x2, 2024 :: (load (s64) from %stack.3)
   ; CHECK-NEXT:   $x8 = LD $x2, 2016 :: (load (s64) from %stack.4)
   ; CHECK-NEXT:   $x18 = LD $x2, 2008 :: (load (s64) from %stack.5)
@@ -206,7 +204,7 @@ body:             |
     renamable $x13 = nsw ADDI renamable $x16, -2
     renamable $v0 = VL1RE8_V %stack.1 :: (load unknown-size from %stack.1, align 8)
     renamable $v0 = PseudoVSLIDEDOWN_VX_M1 undef renamable $v0, killed renamable $v0, killed renamable $x13, $noreg, 3, 1, implicit $vl, implicit $vtype
-    renamable $x13 = PseudoVMV_X_S_M1 killed renamable $v0, 3, implicit $vl, implicit $vtype
+    renamable $x13 = PseudoVMV_X_S killed renamable $v0, 3, implicit $vl, implicit $vtype
     BLT killed renamable $x16, renamable $x27, %bb.2
 
   bb.1:

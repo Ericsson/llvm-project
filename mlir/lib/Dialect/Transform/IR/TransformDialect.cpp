@@ -8,9 +8,10 @@
 
 #include "mlir/Dialect/Transform/IR/TransformDialect.h"
 #include "mlir/Analysis/CallGraph.h"
-#include "mlir/Dialect/Transform/IR/TransformInterfaces.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
+#include "mlir/Dialect/Transform/IR/Utils.h"
+#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/SCCIterator.h"
 
@@ -65,6 +66,7 @@ void transform::TransformDialect::initialize() {
 #include "mlir/Dialect/Transform/IR/TransformOps.cpp.inc"
       >();
   initializeTypes();
+  initializeLibraryModule();
 }
 
 Type transform::TransformDialect::parseType(DialectAsmParser &parser) const {
@@ -89,13 +91,26 @@ void transform::TransformDialect::printType(Type type,
   it->getSecond()(type, printer);
 }
 
+LogicalResult transform::TransformDialect::loadIntoLibraryModule(
+    ::mlir::OwningOpRef<::mlir::ModuleOp> &&library) {
+  return detail::mergeSymbolsInto(getLibraryModule(), std::move(library));
+}
+
+void transform::TransformDialect::initializeLibraryModule() {
+  MLIRContext *context = getContext();
+  auto loc =
+      FileLineColLoc::get(context, "<transform-dialect-library-module>", 0, 0);
+  libraryModule = ModuleOp::create(loc, "__transform_library");
+  libraryModule.get()->setAttr(TransformDialect::kWithNamedSequenceAttrName,
+                               UnitAttr::get(context));
+}
+
 void transform::TransformDialect::reportDuplicateTypeRegistration(
     StringRef mnemonic) {
   std::string buffer;
   llvm::raw_string_ostream msg(buffer);
   msg << "extensible dialect type '" << mnemonic
       << "' is already registered with a different implementation";
-  msg.flush();
   llvm::report_fatal_error(StringRef(buffer));
 }
 
@@ -105,7 +120,6 @@ void transform::TransformDialect::reportDuplicateOpRegistration(
   llvm::raw_string_ostream msg(buffer);
   msg << "extensible dialect operation '" << opName
       << "' is already registered with a mismatching TypeID";
-  msg.flush();
   llvm::report_fatal_error(StringRef(buffer));
 }
 
@@ -162,7 +176,8 @@ LogicalResult transform::TransformDialect::verifyOperationAttribute(
     }
     return success();
   }
-  if (attribute.getName().getValue() == kSilenceTrackingFailuresAttrName) {
+  if (attribute.getName().getValue() ==
+      FindPayloadReplacementOpInterface::kSilenceTrackingFailuresAttrName) {
     if (!llvm::isa<UnitAttr>(attribute.getValue())) {
       return op->emitError()
              << attribute.getName() << " must be a unit attribute";

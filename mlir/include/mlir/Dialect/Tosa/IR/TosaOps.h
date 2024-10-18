@@ -34,6 +34,11 @@ class PatternRewriter;
 
 namespace tosa {
 
+ParseResult parseTypeOrAttr(OpAsmParser &parser, TypeAttr &typeAttr,
+                            Attribute &attr);
+void printTypeOrAttr(OpAsmPrinter &p, Operation *op, TypeAttr type,
+                     Attribute attr);
+
 #include "mlir/Dialect/Tosa/IR/TosaInterfaces.h.inc"
 
 } // namespace tosa
@@ -55,11 +60,11 @@ public:
     if (llvm::isa<FloatType>(resElemType))
       return impl::verifySameOperandsAndResultElementType(op);
 
-    if (auto resIntType = resElemType.dyn_cast<IntegerType>()) {
+    if (auto resIntType = dyn_cast<IntegerType>(resElemType)) {
       IntegerType lhsIntType =
-          getElementTypeOrSelf(op->getOperand(0)).cast<IntegerType>();
+          cast<IntegerType>(getElementTypeOrSelf(op->getOperand(0)));
       IntegerType rhsIntType =
-          getElementTypeOrSelf(op->getOperand(1)).cast<IntegerType>();
+          cast<IntegerType>(getElementTypeOrSelf(op->getOperand(1)));
       if (lhsIntType != rhsIntType)
         return op->emitOpError(
             "requires the same element type for all operands");
@@ -73,9 +78,17 @@ public:
       return success();
     }
 
-    return failure();
+    // In cases of all other types, op requires the same element
+    // type for all operands and result.
+    return impl::verifySameOperandsAndResultElementType(op);
   }
 };
+
+/// This class indicates that an op is tosa-elementwise (permits broadcasting,
+/// unlike Elementwise trait).
+template <typename ConcreteType>
+class TosaElementwiseOperator
+    : public TraitBase<ConcreteType, TosaElementwiseOperator> {};
 
 } // namespace tosa
 } // namespace OpTrait

@@ -118,7 +118,7 @@ unsigned AVRMCCodeEmitter::encodeLDSTPtrReg(const MCInst &MI, unsigned OpNo,
   // The operand should be a pointer register.
   assert(MO.isReg());
 
-  switch (MO.getReg()) {
+  switch (MO.getReg().id()) {
   case AVR::R27R26:
     return 0x03; // X: 0b11
   case AVR::R29R28:
@@ -144,7 +144,7 @@ unsigned AVRMCCodeEmitter::encodeMemri(const MCInst &MI, unsigned OpNo,
 
   uint8_t RegBit = 0;
 
-  switch (RegOp.getReg()) {
+  switch (RegOp.getReg().id()) {
   default:
     Ctx.reportError(MI.getLoc(), "Expected either Y or Z register");
     return 0;
@@ -285,7 +285,7 @@ void AVRMCCodeEmitter::encodeInstruction(const MCInst &MI,
 
   for (int64_t i = Size / 2 - 1; i >= 0; --i) {
     uint16_t Word = (BinaryOpCode >> (i * 16)) & 0xFFFF;
-    support::endian::write(CB, Word, support::endianness::little);
+    support::endian::write(CB, Word, llvm::endianness::little);
   }
 }
 

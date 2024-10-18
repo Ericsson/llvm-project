@@ -21,7 +21,6 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Interfaces/ValueBoundsOpInterface.h"
-#include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -449,7 +448,7 @@ struct IndexCastPattern final : NarrowingPattern<CastOp> {
       return failure();
 
     FailureOr<int64_t> ub = ValueBoundsConstraintSet::computeConstantBound(
-        presburger::BoundType::UB, in, /*dim=*/std::nullopt,
+        presburger::BoundType::UB, in,
         /*stopCondition=*/nullptr, /*closedUB=*/true);
     if (failed(ub))
       return failure();
@@ -712,7 +711,7 @@ struct ExtensionOverTranspose final : NarrowingPattern<vector::TransposeOp> {
     VectorType newTy =
         origTy.cloneWith(origTy.getShape(), ext->getInElementType());
     Value newTranspose = rewriter.create<vector::TransposeOp>(
-        op.getLoc(), newTy, ext->getIn(), op.getTransp());
+        op.getLoc(), newTy, ext->getIn(), op.getPermutation());
     ext->recreateAndReplace(rewriter, op, newTranspose);
     return success();
   }
@@ -759,7 +758,8 @@ struct ArithIntNarrowingPass final
     MLIRContext *ctx = op->getContext();
     RewritePatternSet patterns(ctx);
     populateArithIntNarrowingPatterns(
-        patterns, ArithIntNarrowingOptions{bitwidthsSupported});
+        patterns, ArithIntNarrowingOptions{
+                      llvm::to_vector_of<unsigned>(bitwidthsSupported)});
     if (failed(applyPatternsAndFoldGreedily(op, std::move(patterns))))
       signalPassFailure();
   }

@@ -22,8 +22,10 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/TypeSize.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/RISCVTargetParser.h"
 #include <cassert>
 #include <utility>
 
@@ -45,7 +47,6 @@ Type *Type::getPrimitiveType(LLVMContext &C, TypeID IDNumber) {
   case PPC_FP128TyID : return getPPC_FP128Ty(C);
   case LabelTyID     : return getLabelTy(C);
   case MetadataTyID  : return getMetadataTy(C);
-  case X86_MMXTyID   : return getX86_MMXTy(C);
   case X86_AMXTyID   : return getX86_AMXTy(C);
   case TokenTyID     : return getTokenTy(C);
   default:
@@ -111,6 +112,13 @@ Type *Type::getFloatingPointTy(LLVMContext &C, const fltSemantics &S) {
   return Ty;
 }
 
+bool Type::isRISCVVectorTupleTy() const {
+  if (!isTargetExtTy())
+    return false;
+
+  return cast<TargetExtType>(this)->getName() == "riscv.vector.tuple";
+}
+
 bool Type::canLosslesslyBitCastTo(Type *Ty) const {
   // Identity cast means no change so return true
   if (this == Ty)
@@ -125,14 +133,6 @@ bool Type::canLosslesslyBitCastTo(Type *Ty) const {
   if (isa<VectorType>(this) && isa<VectorType>(Ty))
     return getPrimitiveSizeInBits() == Ty->getPrimitiveSizeInBits();
 
-  //  64-bit fixed width vector types can be losslessly converted to x86mmx.
-  if (((isa<FixedVectorType>(this)) && Ty->isX86_MMXTy()) &&
-      getPrimitiveSizeInBits().getFixedValue() == 64)
-    return true;
-  if ((isX86_MMXTy() && isa<FixedVectorType>(Ty)) &&
-      Ty->getPrimitiveSizeInBits().getFixedValue() == 64)
-    return true;
-
   //  8192-bit fixed width vector types can be losslessly converted to x86amx.
   if (((isa<FixedVectorType>(this)) && Ty->isX86_AMXTy()) &&
       getPrimitiveSizeInBits().getFixedValue() == 8192)
@@ -141,16 +141,9 @@ bool Type::canLosslesslyBitCastTo(Type *Ty) const {
       Ty->getPrimitiveSizeInBits().getFixedValue() == 8192)
     return true;
 
-  // At this point we have only various mismatches of the first class types
-  // remaining and ptr->ptr. Just select the lossless conversions. Everything
-  // else is not lossless. Conservatively assume we can't losslessly convert
-  // between pointers with different address spaces.
-  if (auto *PTy = dyn_cast<PointerType>(this)) {
-    if (auto *OtherPTy = dyn_cast<PointerType>(Ty))
-      return PTy->getAddressSpace() == OtherPTy->getAddressSpace();
-    return false;
-  }
-  return false;  // Other types have no identity values
+  // Conservatively assume we can't losslessly convert between pointers with
+  // different address spaces.
+  return false;
 }
 
 bool Type::isEmptyTy() const {
@@ -172,17 +165,24 @@ bool Type::isEmptyTy() const {
 
 TypeSize Type::getPrimitiveSizeInBits() const {
   switch (getTypeID()) {
-  case Type::HalfTyID: return TypeSize::Fixed(16);
-  case Type::BFloatTyID: return TypeSize::Fixed(16);
-  case Type::FloatTyID: return TypeSize::Fixed(32);
-  case Type::DoubleTyID: return TypeSize::Fixed(64);
-  case Type::X86_FP80TyID: return TypeSize::Fixed(80);
-  case Type::FP128TyID: return TypeSize::Fixed(128);
-  case Type::PPC_FP128TyID: return TypeSize::Fixed(128);
-  case Type::X86_MMXTyID: return TypeSize::Fixed(64);
-  case Type::X86_AMXTyID: return TypeSize::Fixed(8192);
+  case Type::HalfTyID:
+    return TypeSize::getFixed(16);
+  case Type::BFloatTyID:
+    return TypeSize::getFixed(16);
+  case Type::FloatTyID:
+    return TypeSize::getFixed(32);
+  case Type::DoubleTyID:
+    return TypeSize::getFixed(64);
+  case Type::X86_FP80TyID:
+    return TypeSize::getFixed(80);
+  case Type::FP128TyID:
+    return TypeSize::getFixed(128);
+  case Type::PPC_FP128TyID:
+    return TypeSize::getFixed(128);
+  case Type::X86_AMXTyID:
+    return TypeSize::getFixed(8192);
   case Type::IntegerTyID:
-    return TypeSize::Fixed(cast<IntegerType>(this)->getBitWidth());
+    return TypeSize::getFixed(cast<IntegerType>(this)->getBitWidth());
   case Type::FixedVectorTyID:
   case Type::ScalableVectorTyID: {
     const VectorType *VTy = cast<VectorType>(this);
@@ -191,7 +191,8 @@ TypeSize Type::getPrimitiveSizeInBits() const {
     assert(!ETS.isScalable() && "Vector type should have fixed-width elements");
     return {ETS.getFixedValue() * EC.getKnownMinValue(), EC.isScalable()};
   }
-  default: return TypeSize::Fixed(0);
+  default:
+    return TypeSize::getFixed(0);
   }
 }
 
@@ -242,7 +243,6 @@ Type *Type::getTokenTy(LLVMContext &C) { return &C.pImpl->TokenTy; }
 Type *Type::getX86_FP80Ty(LLVMContext &C) { return &C.pImpl->X86_FP80Ty; }
 Type *Type::getFP128Ty(LLVMContext &C) { return &C.pImpl->FP128Ty; }
 Type *Type::getPPC_FP128Ty(LLVMContext &C) { return &C.pImpl->PPC_FP128Ty; }
-Type *Type::getX86_MMXTy(LLVMContext &C) { return &C.pImpl->X86_MMXTy; }
 Type *Type::getX86_AMXTy(LLVMContext &C) { return &C.pImpl->X86_AMXTy; }
 
 IntegerType *Type::getInt1Ty(LLVMContext &C) { return &C.pImpl->Int1Ty; }
@@ -254,10 +254,6 @@ IntegerType *Type::getInt128Ty(LLVMContext &C) { return &C.pImpl->Int128Ty; }
 
 IntegerType *Type::getIntNTy(LLVMContext &C, unsigned N) {
   return IntegerType::get(C, N);
-}
-
-PointerType *Type::getInt8PtrTy(LLVMContext &C, unsigned AS) {
-  return PointerType::get(C, AS);
 }
 
 Type *Type::getWasm_ExternrefTy(LLVMContext &C) {
@@ -353,7 +349,7 @@ FunctionType *FunctionType::get(Type *ReturnType,
 }
 
 FunctionType *FunctionType::get(Type *Result, bool isVarArg) {
-  return get(Result, std::nullopt, isVarArg);
+  return get(Result, {}, isVarArg);
 }
 
 bool FunctionType::isValidReturnType(Type *RetTy) {
@@ -434,13 +430,14 @@ bool StructType::containsScalableVectorType(
 }
 
 bool StructType::containsHomogeneousScalableVectorTypes() const {
-  Type *FirstTy = getNumElements() > 0 ? elements()[0] : nullptr;
-  if (!FirstTy || !isa<ScalableVectorType>(FirstTy))
+  if (getNumElements() <= 0 || !isa<ScalableVectorType>(elements().front()))
     return false;
-  for (Type *Ty : elements())
-    if (Ty != FirstTy)
-      return false;
-  return true;
+  return containsHomogeneousTypes();
+}
+
+bool StructType::containsHomogeneousTypes() const {
+  ArrayRef<Type *> ElementTys = elements();
+  return !ElementTys.empty() && all_equal(ElementTys);
 }
 
 void StructType::setBody(ArrayRef<Type*> Elements, bool isPacked) {
@@ -519,7 +516,7 @@ StructType *StructType::create(LLVMContext &Context, StringRef Name) {
 }
 
 StructType *StructType::get(LLVMContext &Context, bool isPacked) {
-  return get(Context, std::nullopt, isPacked);
+  return get(Context, {}, isPacked);
 }
 
 StructType *StructType::create(LLVMContext &Context, ArrayRef<Type*> Elements,
@@ -797,6 +794,13 @@ TargetExtType::TargetExtType(LLVMContext &C, StringRef Name,
 TargetExtType *TargetExtType::get(LLVMContext &C, StringRef Name,
                                   ArrayRef<Type *> Types,
                                   ArrayRef<unsigned> Ints) {
+  return cantFail(getOrError(C, Name, Types, Ints));
+}
+
+Expected<TargetExtType *> TargetExtType::getOrError(LLVMContext &C,
+                                                    StringRef Name,
+                                                    ArrayRef<Type *> Types,
+                                                    ArrayRef<unsigned> Ints) {
   const TargetExtTypeKeyInfo::KeyTy Key(Name, Types, Ints);
   TargetExtType *TT;
   // Since we only want to allocate a fresh target type in case none is found
@@ -804,8 +808,8 @@ TargetExtType *TargetExtType::get(LLVMContext &C, StringRef Name,
   // one for inserting the newly allocated one), here we instead lookup based on
   // Key and update the reference to the target type in-place to a newly
   // allocated one if not found.
-  auto Insertion = C.pImpl->TargetExtTypes.insert_as(nullptr, Key);
-  if (Insertion.second) {
+  auto [Iter, Inserted] = C.pImpl->TargetExtTypes.insert_as(nullptr, Key);
+  if (Inserted) {
     // The target type was not found. Allocate one and update TargetExtTypes
     // in-place.
     TT = (TargetExtType *)C.pImpl->Alloc.Allocate(
@@ -813,12 +817,29 @@ TargetExtType *TargetExtType::get(LLVMContext &C, StringRef Name,
             sizeof(unsigned) * Ints.size(),
         alignof(TargetExtType));
     new (TT) TargetExtType(C, Name, Types, Ints);
-    *Insertion.first = TT;
-  } else {
-    // The target type was found. Just return it.
-    TT = *Insertion.first;
+    *Iter = TT;
+    return checkParams(TT);
   }
-  return TT;
+
+  // The target type was found. Just return it.
+  return *Iter;
+}
+
+Expected<TargetExtType *> TargetExtType::checkParams(TargetExtType *TTy) {
+  // Opaque types in the AArch64 name space.
+  if (TTy->Name == "aarch64.svcount" &&
+      (TTy->getNumTypeParameters() != 0 || TTy->getNumIntParameters() != 0))
+    return createStringError(
+        "target extension type aarch64.svcount should have no parameters");
+
+  // Opaque types in the RISC-V name space.
+  if (TTy->Name == "riscv.vector.tuple" &&
+      (TTy->getNumTypeParameters() != 1 || TTy->getNumIntParameters() != 1))
+    return createStringError(
+        "target extension type riscv.vector.tuple should have one "
+        "type parameter and one integer parameter");
+
+  return TTy;
 }
 
 namespace {
@@ -835,13 +856,33 @@ struct TargetTypeInfo {
 static TargetTypeInfo getTargetTypeInfo(const TargetExtType *Ty) {
   LLVMContext &C = Ty->getContext();
   StringRef Name = Ty->getName();
-  if (Name.startswith("spirv."))
+  if (Name == "spirv.Image")
+    return TargetTypeInfo(PointerType::get(C, 0), TargetExtType::CanBeGlobal);
+  if (Name.starts_with("spirv."))
     return TargetTypeInfo(PointerType::get(C, 0), TargetExtType::HasZeroInit,
                           TargetExtType::CanBeGlobal);
 
   // Opaque types in the AArch64 name space.
   if (Name == "aarch64.svcount")
-    return TargetTypeInfo(ScalableVectorType::get(Type::getInt1Ty(C), 16));
+    return TargetTypeInfo(ScalableVectorType::get(Type::getInt1Ty(C), 16),
+                          TargetExtType::HasZeroInit);
+
+  // RISC-V vector tuple type. The layout is represented as the type that needs
+  // the same number of vector registers(VREGS) as this tuple type, represented
+  // as <vscale x (RVVBitsPerBlock * VREGS / 8) x i8>.
+  if (Name == "riscv.vector.tuple") {
+    unsigned TotalNumElts =
+        std::max(cast<ScalableVectorType>(Ty->getTypeParameter(0))
+                     ->getMinNumElements(),
+                 RISCV::RVVBitsPerBlock / 8) *
+        Ty->getIntParameter(0);
+    return TargetTypeInfo(
+        ScalableVectorType::get(Type::getInt8Ty(C), TotalNumElts));
+  }
+
+  // DirectX resources
+  if (Name.starts_with("dx."))
+    return TargetTypeInfo(PointerType::get(C, 0));
 
   return TargetTypeInfo(Type::getVoidTy(C));
 }

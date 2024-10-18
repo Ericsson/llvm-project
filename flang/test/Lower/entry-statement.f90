@@ -1,4 +1,4 @@
-! RUN: bbc -emit-fir -o - %s | FileCheck %s
+! RUN: bbc -emit-fir -hlfir=false -o - %s | FileCheck %s
 
 
 ! CHECK-LABEL: func @_QPcompare1(
@@ -182,16 +182,16 @@ end
 
 ! CHECK-LABEL: func @_QPashapec(
 subroutine ashapec(asc)
-  ! CHECK: %[[asx:[0-9]*]] = fir.alloca !fir.box<!fir.heap<!fir.array<?x!fir.complex<4>>>>
+  ! CHECK: %[[asx:[0-9]*]] = fir.alloca !fir.box<!fir.heap<!fir.array<?xcomplex<f32>>>>
   ! CHECK: %[[asi:[0-9]*]] = fir.alloca !fir.box<!fir.heap<!fir.array<?xi32>>>
   ! CHECK: %[[zeroi:[0-9]*]] = fir.zero_bits !fir.heap<!fir.array<?xi32>>
   ! CHECK: %[[shapei:[0-9]*]] = fir.shape %c0{{.*}} : (index) -> !fir.shape<1>
   ! CHECK: %[[boxi:[0-9]*]] = fir.embox %[[zeroi]](%[[shapei]]) : (!fir.heap<!fir.array<?xi32>>, !fir.shape<1>) -> !fir.box<!fir.heap<!fir.array<?xi32>>>
   ! CHECK: fir.store %[[boxi]] to %[[asi]] : !fir.ref<!fir.box<!fir.heap<!fir.array<?xi32>>>>
-  ! CHECK: %[[zerox:[0-9]*]] = fir.zero_bits !fir.heap<!fir.array<?x!fir.complex<4>>>
+  ! CHECK: %[[zerox:[0-9]*]] = fir.zero_bits !fir.heap<!fir.array<?xcomplex<f32>>>
   ! CHECK: %[[shapex:[0-9]*]] = fir.shape %c0{{.*}} : (index) -> !fir.shape<1>
-  ! CHECK: %[[boxx:[0-9].*]] = fir.embox %[[zerox]](%[[shapex]]) : (!fir.heap<!fir.array<?x!fir.complex<4>>>, !fir.shape<1>) -> !fir.box<!fir.heap<!fir.array<?x!fir.complex<4>>>>
-  ! CHECK: fir.store %[[boxx]] to %[[asx]] : !fir.ref<!fir.box<!fir.heap<!fir.array<?x!fir.complex<4>>>>>
+  ! CHECK: %[[boxx:[0-9].*]] = fir.embox %[[zerox]](%[[shapex]]) : (!fir.heap<!fir.array<?xcomplex<f32>>>, !fir.shape<1>) -> !fir.box<!fir.heap<!fir.array<?xcomplex<f32>>>>
+  ! CHECK: fir.store %[[boxx]] to %[[asx]] : !fir.ref<!fir.box<!fir.heap<!fir.array<?xcomplex<f32>>>>>
   character asc(:)
   integer asi(:)
   complex asx(:)
@@ -199,16 +199,16 @@ subroutine ashapec(asc)
   return
 ! CHECK-LABEL: func @_QPashapei(
 entry ashapei(asi)
-  ! CHECK: %[[asx:[0-9]*]] = fir.alloca !fir.box<!fir.heap<!fir.array<?x!fir.complex<4>>>>
+  ! CHECK: %[[asx:[0-9]*]] = fir.alloca !fir.box<!fir.heap<!fir.array<?xcomplex<f32>>>>
   ! CHECK: %[[asc:[0-9]*]] = fir.alloca !fir.box<!fir.heap<!fir.array<?x!fir.char<1>>>>
   ! CHECK: %[[zeroc:[0-9]*]] = fir.zero_bits !fir.heap<!fir.array<?x!fir.char<1>>>
   ! CHECK: %[[shapec:[0-9]*]] = fir.shape %c0{{.*}} : (index) -> !fir.shape<1>
   ! CHECK: %[[boxc:[0-9]*]] = fir.embox %[[zeroc]](%[[shapec]]) : (!fir.heap<!fir.array<?x!fir.char<1>>>, !fir.shape<1>) -> !fir.box<!fir.heap<!fir.array<?x!fir.char<1>>>>
   ! CHECK: fir.store %[[boxc]] to %[[asc]] : !fir.ref<!fir.box<!fir.heap<!fir.array<?x!fir.char<1>>>>>
-  ! CHECK: %[[zerox:[0-9]*]] = fir.zero_bits !fir.heap<!fir.array<?x!fir.complex<4>>>
+  ! CHECK: %[[zerox:[0-9]*]] = fir.zero_bits !fir.heap<!fir.array<?xcomplex<f32>>>
   ! CHECK: %[[shapex:[0-9]*]] = fir.shape %c0{{.*}} : (index) -> !fir.shape<1>
-  ! CHECK: %[[boxx:[0-9].*]] = fir.embox %[[zerox]](%[[shapex]]) : (!fir.heap<!fir.array<?x!fir.complex<4>>>, !fir.shape<1>) -> !fir.box<!fir.heap<!fir.array<?x!fir.complex<4>>>>
-  ! CHECK: fir.store %[[boxx]] to %[[asx]] : !fir.ref<!fir.box<!fir.heap<!fir.array<?x!fir.complex<4>>>>>
+  ! CHECK: %[[boxx:[0-9].*]] = fir.embox %[[zerox]](%[[shapex]]) : (!fir.heap<!fir.array<?xcomplex<f32>>>, !fir.shape<1>) -> !fir.box<!fir.heap<!fir.array<?xcomplex<f32>>>>
+  ! CHECK: fir.store %[[boxx]] to %[[asx]] : !fir.ref<!fir.box<!fir.heap<!fir.array<?xcomplex<f32>>>>>
   asi = 3
   return
 ! CHECK-LABEL: func @_QPashapex(
@@ -261,7 +261,7 @@ function f1(n1) result(res1)
   ! CHECK:   fir.store %[[V_6]] to %[[V_5]] : !fir.ref<!fir.boxchar<1>>
   ! CHECK:   br ^bb1
   ! CHECK: ^bb1:  // pred: ^bb0
-  ! CHECK:   %[[V_7:[0-9]+]] = fir.address_of(@_QQcl.6120612061) : !fir.ref<!fir.char<1,5>>
+  ! CHECK:   %[[V_7:[0-9]+]] = fir.address_of(@_QQclX6120612061) : !fir.ref<!fir.char<1,5>>
   ! CHECK:   %[[V_10:[0-9]+]] = fir.convert %c5{{.*}} : (index) -> i64
   ! CHECK:   %[[V_11:[0-9]+]] = arith.muli %c1{{.*}}_i64, %[[V_10]] : i64
   ! CHECK:   %[[V_12:[0-9]+]] = fir.convert %[[V_0]] : (!fir.ref<!fir.char<1,5>>) -> !fir.ref<i8>
@@ -280,7 +280,7 @@ function f1(n1) result(res1)
   ! CHECK: ^bb4:  // pred: ^bb3
   ! CHECK:   cf.br ^bb6
   ! CHECK: ^bb5:  // pred: ^bb3
-  ! CHECK:   %[[V_21:[0-9]+]] = fir.address_of(@_QQcl.4320432043) : !fir.ref<!fir.char<1,5>>
+  ! CHECK:   %[[V_21:[0-9]+]] = fir.address_of(@_QQclX4320432043) : !fir.ref<!fir.char<1,5>>
   ! CHECK:   %[[V_24:[0-9]+]] = fir.convert %c5{{.*}} : (index) -> i64
   ! CHECK:   %[[V_25:[0-9]+]] = arith.muli %c1{{.*}}, %[[V_24]] : i64
   ! CHECK:   %[[V_26:[0-9]+]] = fir.convert %[[V_0]] : (!fir.ref<!fir.char<1,5>>) -> !fir.ref<i8>
@@ -316,7 +316,7 @@ entry f2(n2)
   ! CHECK: ^bb2:  // pred: ^bb1
   ! CHECK:   br ^bb4
   ! CHECK: ^bb3:  // pred: ^bb1
-  ! CHECK:   %[[V_9:[0-9]+]] = fir.address_of(@_QQcl.4320432043) : !fir.ref<!fir.char<1,5>>
+  ! CHECK:   %[[V_9:[0-9]+]] = fir.address_of(@_QQclX4320432043) : !fir.ref<!fir.char<1,5>>
   ! CHECK:   %[[V_12:[0-9]+]] = fir.convert %c5{{.*}} : (index) -> i64
   ! CHECK:   %[[V_13:[0-9]+]] = arith.muli %c1{{.*}}, %[[V_12]] : i64
   ! CHECK:   %[[V_14:[0-9]+]] = fir.convert %[[V_0]] : (!fir.ref<!fir.char<1,5>>) -> !fir.ref<i8>
@@ -345,7 +345,7 @@ entry f3
   ! CHECK:   fir.store %[[V_7]] to %[[V_6]] : !fir.ref<!fir.boxchar<1>>
   ! CHECK:   br ^bb1
   ! CHECK: ^bb1:  // pred: ^bb0
-  ! CHECK:   %[[V_8:[0-9]+]] = fir.address_of(@_QQcl.4320432043) : !fir.ref<!fir.char<1,5>>
+  ! CHECK:   %[[V_8:[0-9]+]] = fir.address_of(@_QQclX4320432043) : !fir.ref<!fir.char<1,5>>
   ! CHECK:   %[[V_11:[0-9]+]] = fir.convert %c5{{.*}} : (index) -> i64
   ! CHECK:   %[[V_12:[0-9]+]] = arith.muli %c1{{.*}}_i64, %[[V_11]] : i64
   ! CHECK:   %[[V_13:[0-9]+]] = fir.convert %[[V_0]] : (!fir.ref<!fir.char<1,5>>) -> !fir.ref<i8>
@@ -365,7 +365,7 @@ contains
     ! CHECK:   %[[V_0:[0-9]+]] = fir.coordinate_of %arg0, %c0{{.*}}_i32 : (!fir.ref<tuple<!fir.boxchar<1>, !fir.boxchar<1>>>, i32) -> !fir.ref<!fir.boxchar<1>>
     ! CHECK:   %[[V_1:[0-9]+]] = fir.load %[[V_0]] : !fir.ref<!fir.boxchar<1>>
     ! CHECK:   %[[V_2:[0-9]+]]:2 = fir.unboxchar %[[V_1]] : (!fir.boxchar<1>) -> (!fir.ref<!fir.char<1,?>>, index)
-    ! CHECK:   %[[V_3:[0-9]+]] = fir.address_of(@_QQcl.6220622062) : !fir.ref<!fir.char<1,5>>
+    ! CHECK:   %[[V_3:[0-9]+]] = fir.address_of(@_QQclX6220622062) : !fir.ref<!fir.char<1,5>>
     ! CHECK:   %[[V_4:[0-9]+]] = arith.cmpi slt, %[[V_2]]#1, %c5{{.*}} : index
     ! CHECK:   %[[V_5:[0-9]+]] = arith.select %[[V_4]], %[[V_2]]#1, %c5{{.*}} : index
     ! CHECK:   %[[V_6:[0-9]+]] = fir.convert %[[V_5]] : (index) -> i64
@@ -391,7 +391,7 @@ contains
     ! CHECK:   %[[V_0:[0-9]+]] = fir.coordinate_of %arg0, %c1{{.*}}_i32 : (!fir.ref<tuple<!fir.boxchar<1>, !fir.boxchar<1>>>, i32) -> !fir.ref<!fir.boxchar<1>>
     ! CHECK:   %[[V_1:[0-9]+]] = fir.load %[[V_0]] : !fir.ref<!fir.boxchar<1>>
     ! CHECK:   %[[V_2:[0-9]+]]:2 = fir.unboxchar %[[V_1]] : (!fir.boxchar<1>) -> (!fir.ref<!fir.char<1,?>>, index)
-    ! CHECK:   %[[V_3:[0-9]+]] = fir.address_of(@_QQcl.6320632063) : !fir.ref<!fir.char<1,5>>
+    ! CHECK:   %[[V_3:[0-9]+]] = fir.address_of(@_QQclX6320632063) : !fir.ref<!fir.char<1,5>>
     ! CHECK:   %[[V_4:[0-9]+]] = arith.cmpi slt, %[[V_2]]#1, %c5{{.*}} : index
     ! CHECK:   %[[V_5:[0-9]+]] = arith.select %[[V_4]], %[[V_2]]#1, %c5{{.*}} : index
     ! CHECK:   %[[V_6:[0-9]+]] = fir.convert %[[V_5]] : (index) -> i64

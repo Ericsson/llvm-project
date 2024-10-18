@@ -60,8 +60,9 @@ CSKYMCCodeEmitter::getImmOpValueMSBSize(const MCInst &MI, unsigned Idx,
 static void writeData(uint32_t Bin, unsigned Size, SmallVectorImpl<char> &CB) {
   if (Size == 4)
     support::endian::write(CB, static_cast<uint16_t>(Bin >> 16),
-                           support::little);
-  support::endian::write(CB, static_cast<uint16_t>(Bin), support::little);
+                           llvm::endianness::little);
+  support::endian::write(CB, static_cast<uint16_t>(Bin),
+                         llvm::endianness::little);
 }
 
 void CSKYMCCodeEmitter::expandJBTF(const MCInst &MI, SmallVectorImpl<char> &CB,
@@ -277,16 +278,18 @@ CSKYMCCodeEmitter::getRegisterSeqOpValue(const MCInst &MI, unsigned Op,
 unsigned CSKYMCCodeEmitter::getImmJMPIX(const MCInst &MI, unsigned Idx,
                                         SmallVectorImpl<MCFixup> &Fixups,
                                         const MCSubtargetInfo &STI) const {
-  if (MI.getOperand(Idx).getImm() == 16)
+  switch (MI.getOperand(Idx).getImm()) {
+  default:
+    llvm_unreachable("Unhandled jmpix imm!");
+  case 16:
     return 0;
-  else if (MI.getOperand(Idx).getImm() == 24)
+  case 24:
     return 1;
-  else if (MI.getOperand(Idx).getImm() == 32)
+  case 32:
     return 2;
-  else if (MI.getOperand(Idx).getImm() == 40)
+  case 40:
     return 3;
-  else
-    assert(0);
+  }
 }
 
 MCFixupKind CSKYMCCodeEmitter::getTargetFixup(const MCExpr *Expr) const {
