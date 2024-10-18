@@ -2856,8 +2856,9 @@ void ExprEngine::processBranch(
         // Checkers may use this heuristic mark to discard results found on
         // branches that contain this "weak" assumption.
         StTrue = recordWeakLoopAssumption(StTrue);
+      } else {
+        builder.generateNode(StTrue, true, PredN);
       }
-      builder.generateNode(StTrue, true, PredN);
     }
 
     // Process the false branch.
@@ -2871,8 +2872,9 @@ void ExprEngine::processBranch(
         // Checkers may use this heuristic mark to discard results found on
         // branches that contain this "weak" assumption.
         StFalse = recordWeakLoopAssumption(StFalse);
+      } else {
+        builder.generateNode(StFalse, false, PredN);
       }
-      builder.generateNode(StFalse, false, PredN);
     }
   }
   currBldrCtx = nullptr;
