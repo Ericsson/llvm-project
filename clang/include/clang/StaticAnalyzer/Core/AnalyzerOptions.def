@@ -102,6 +102,10 @@ ANALYZER_OPTION(bool, ShouldIncludeLoopExitInCFG, "cfg-loopexit",
                 "be included in the CFG.",
                 false)
 
+ANALYZER_OPTION(bool, ShouldSuppressThirdIteration, "suppress-third-iteration",
+                "If true then results that assume third iteration are suppressed",
+                true)
+
 ANALYZER_OPTION(bool, ShouldIncludeRichConstructorsInCFG,
                 "cfg-rich-constructors",
                 "Whether or not construction site information should be "

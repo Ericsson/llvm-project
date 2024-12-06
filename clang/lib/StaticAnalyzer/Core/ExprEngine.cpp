@@ -2753,6 +2753,10 @@ assumeCondition(const Stmt *Condition, ExplodedNode *N) {
   return State->assume(V);
 }
 
+/// Set to true if the analyzer assumes that an opaque loop condition is true
+/// when it already evaluated two iterations.
+REGISTER_TRAIT_WITH_PROGRAMSTATE(DidAssumeThirdIteration, bool);
+
 void ExprEngine::processBranch(
     const Stmt *Condition, NodeBuilderContext &BldCtx, ExplodedNode *Pred,
     ExplodedNodeSet &Dst, const CFGBlock *DstT, const CFGBlock *DstF,
@@ -2825,14 +2829,20 @@ void ExprEngine::processBranch(
       // conflicts with the widen-loop analysis option (which is off by
       // default). If we intend to support and stabilize the loop widening,
       // we'll need to ensure that it 'plays nicely' with this logic.
-      if (!SkipTrueBranch || AMgr.options.ShouldWidenLoops)
-        Builder.generateNode(StTrue, true, PredN);
+      if (SkipTrueBranch && !AMgr.options.ShouldWidenLoops)
+        StTrue = StTrue->set<DidAssumeThirdIteration>(true);
+
+      Builder.generateNode(StTrue, true, PredN);
     }
 
     if (StFalse)
       Builder.generateNode(StFalse, false, PredN);
   }
   currBldrCtx = nullptr;
+}
+
+bool ExprEngine::didAssumeThirdIteration(ProgramStateRef State) {
+  return State->get<DidAssumeThirdIteration>();
 }
 
 /// The GDM component containing the set of global variables which have been
