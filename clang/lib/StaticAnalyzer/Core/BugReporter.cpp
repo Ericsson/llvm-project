@@ -2864,7 +2864,8 @@ generateVisitorsDiagnostics(PathSensitiveBugReport *R,
 std::optional<PathDiagnosticBuilder> PathDiagnosticBuilder::findValidReport(
     ArrayRef<PathSensitiveBugReport *> &bugReports,
     PathSensitiveBugReporter &Reporter) {
-  Z3CrosscheckOracle Z3Oracle(Reporter.getAnalyzerOptions());
+  const AnalyzerOptions &AOpts = Reporter.getAnalyzerOptions();
+  Z3CrosscheckOracle Z3Oracle(AOpts);
 
   BugPathGetter BugGraph(&Reporter.getGraph(), bugReports);
 
@@ -2874,6 +2875,11 @@ std::optional<PathDiagnosticBuilder> PathDiagnosticBuilder::findValidReport(
     assert(R && "No original report found for sliced graph.");
     assert(R->isValid() && "Report selected by trimmed graph marked invalid.");
     const ExplodedNode *ErrorNode = BugPath->ErrorNode;
+
+    const ProgramStateRef ErrorState = ErrorNode->getState();
+    if (ExprEngine::didAssumeSkippedLoop(ErrorState)) {
+      R->markInvalid("Assumed skipped loop", /*Data=*/nullptr);
+    }
 
     // Register refutation visitors first, if they mark the bug invalid no
     // further analysis is required

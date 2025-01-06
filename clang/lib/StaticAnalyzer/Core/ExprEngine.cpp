@@ -2760,6 +2760,8 @@ assumeCondition(const Stmt *Condition, ExplodedNode *N) {
   return State->assume(V);
 }
 
+REGISTER_TRAIT_WITH_PROGRAMSTATE(DidAssumeSkippedLoop, bool)
+
 void ExprEngine::processBranch(
     const Stmt *Condition, NodeBuilderContext &BldCtx, ExplodedNode *Pred,
     ExplodedNodeSet &Dst, const CFGBlock *DstT, const CFGBlock *DstF,
@@ -2853,11 +2855,16 @@ void ExprEngine::processBranch(
       bool BeforeFirstIteration = IterationsCompletedInLoop == std::optional{0};
       bool SkipFalseBranch = BothFeasible && BeforeFirstIteration &&
                              AMgr.options.ShouldAssumeOneIteration;
-      if (!SkipFalseBranch)
-        Builder.generateNode(StFalse, false, PredN);
+      if (SkipFalseBranch)
+        StFalse = StFalse->set<DidAssumeSkippedLoop>(true);
+      Builder.generateNode(StFalse, false, PredN);
     }
   }
   currBldrCtx = nullptr;
+}
+
+bool ExprEngine::didAssumeSkippedLoop(ProgramStateRef State) {
+  return State->get<DidAssumeSkippedLoop>();
 }
 
 /// The GDM component containing the set of global variables which have been

@@ -330,6 +330,8 @@ public:
                      const CFGBlock *DstT, const CFGBlock *DstF,
                      std::optional<unsigned> IterationsCompletedInLoop);
 
+  static bool didAssumeSkippedLoop(ProgramStateRef State);
+
   /// Called by CoreEngine.
   /// Used to generate successor nodes for temporary destructors depending
   /// on whether the corresponding constructor was visited.
