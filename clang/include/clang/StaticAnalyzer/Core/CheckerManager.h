@@ -435,12 +435,12 @@ public:
   ProgramStateRef runCheckersForEvalAssume(ProgramStateRef state,
                                            SVal Cond, bool Assumption);
 
-  /// Run checkers for evaluating a call.
+  /// Run checkers for evaluating a call, returning true if and only if a
+  /// checker evaluated the call.
   ///
   /// Warning: Currently, the CallEvent MUST come from a CallExpr!
-  void runCheckersForEvalCall(ExplodedNodeSet &Dst, const ExplodedNodeSet &Src,
-                              const CallEvent &CE, ExprEngine &Eng,
-                              const EvalCallOptions &CallOpts);
+  bool runCheckersForEvalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
+                              const CallEvent &CE, ExprEngine &Eng);
 
   /// Run checkers for the entire Translation Unit.
   void runCheckersOnEndOfTranslationUnit(const TranslationUnitDecl *TU,

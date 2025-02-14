@@ -692,8 +692,16 @@ void ExprEngine::evalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
   // to see if the can evaluate the function call, and get a callback at
   // defaultEvalCall if all of them fail.
   ExplodedNodeSet dstCallEvaluated;
-  getCheckerManager().runCheckersForEvalCall(dstCallEvaluated, dstPreVisit,
+  for (auto *const Node : dstPreVisit) {
+    bool Evaluated = getCheckerManager().runCheckersForEvalCall(dstCallEvaluated, Node,
                                              Call, *this, EvalCallOptions());
+
+    // If none of the checkers evaluated the call, use the default handler.
+    if (!Evaluated) {
+      NodeBuilder B(Node, dstCallEvaluated, getBuilderContext());
+      defaultEvalCall(B, Node, Call, EvalCallOptions());
+    }
+  }
 
   // If there were other constructors called for object-type arguments
   // of this call, clean them up.

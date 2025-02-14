@@ -684,63 +684,56 @@ CheckerManager::runCheckersForEvalAssume(ProgramStateRef state,
 
 /// Run checkers for evaluating a call.
 /// Only one checker will evaluate the call.
-void CheckerManager::runCheckersForEvalCall(ExplodedNodeSet &Dst,
-                                            const ExplodedNodeSet &Src,
+bool CheckerManager::runCheckersForEvalCall(ExplodedNodeSet &Dst,
+                                            ExplodedNode *Pred,
                                             const CallEvent &Call,
-                                            ExprEngine &Eng,
-                                            const EvalCallOptions &CallOpts) {
-  for (auto *const Pred : Src) {
-    std::optional<CheckerNameRef> evaluatorChecker;
+                                            ExprEngine &Eng) {
+  std::optional<CheckerNameRef> evaluatorChecker;
 
-    ExplodedNodeSet checkDst;
-    NodeBuilder B(Pred, checkDst, Eng.getBuilderContext());
+  ExplodedNodeSet checkDst;
+  NodeBuilder B(Pred, checkDst, Eng.getBuilderContext());
 
-    // Check if any of the EvalCall callbacks can evaluate the call.
-    for (const auto &EvalCallChecker : EvalCallCheckers) {
-      // TODO: Support the situation when the call doesn't correspond
-      // to any Expr.
-      ProgramPoint L = ProgramPoint::getProgramPoint(
-          Call.getOriginExpr(), ProgramPoint::PostStmtKind,
-          Pred->getLocationContext(), EvalCallChecker.Checker);
-      bool evaluated = false;
-      { // CheckerContext generates transitions(populates checkDest) on
-        // destruction, so introduce the scope to make sure it gets properly
-        // populated.
-        CheckerContext C(B, Eng, Pred, L);
-        evaluated = EvalCallChecker(Call, C);
-      }
-#ifndef NDEBUG
-      if (evaluated && evaluatorChecker) {
-        const auto toString = [](const CallEvent &Call) -> std::string {
-          std::string Buf;
-          llvm::raw_string_ostream OS(Buf);
-          Call.dump(OS);
-          return Buf;
-        };
-        std::string AssertionMessage = llvm::formatv(
-            "The '{0}' call has been already evaluated by the {1} checker, "
-            "while the {2} checker also tried to evaluate the same call. At "
-            "most one checker supposed to evaluate a call.",
-            toString(Call), evaluatorChecker->getName(),
-            EvalCallChecker.Checker->getCheckerName());
-        llvm_unreachable(AssertionMessage.c_str());
-      }
-#endif
-      if (evaluated) {
-        evaluatorChecker = EvalCallChecker.Checker->getCheckerName();
-        Dst.insert(checkDst);
-#ifdef NDEBUG
-        break; // on release don't check that no other checker also evals.
-#endif
-      }
+  // Check if any of the EvalCall callbacks can evaluate the call.
+  for (const auto &EvalCallChecker : EvalCallCheckers) {
+    // TODO: Support the situation when the call doesn't correspond
+    // to any Expr.
+    ProgramPoint L = ProgramPoint::getProgramPoint(
+        Call.getOriginExpr(), ProgramPoint::PostStmtKind,
+        Pred->getLocationContext(), EvalCallChecker.Checker);
+    bool evaluated = false;
+    { // CheckerContext generates transitions(populates checkDest) on
+      // destruction, so introduce the scope to make sure it gets properly
+      // populated.
+      CheckerContext C(B, Eng, Pred, L);
+      evaluated = EvalCallChecker(Call, C);
     }
-
-    // If none of the checkers evaluated the call, ask ExprEngine to handle it.
-    if (!evaluatorChecker) {
-      NodeBuilder B(Pred, Dst, Eng.getBuilderContext());
-      Eng.defaultEvalCall(B, Pred, Call, CallOpts);
+#ifndef NDEBUG
+    if (evaluated && evaluatorChecker) {
+      const auto toString = [](const CallEvent &Call) -> std::string {
+        std::string Buf;
+        llvm::raw_string_ostream OS(Buf);
+        Call.dump(OS);
+        return Buf;
+      };
+      std::string AssertionMessage = llvm::formatv(
+          "The '{0}' call has been already evaluated by the {1} checker, "
+          "while the {2} checker also tried to evaluate the same call. At "
+          "most one checker supposed to evaluate a call.",
+          toString(Call), evaluatorChecker->getName(),
+          EvalCallChecker.Checker->getCheckerName());
+      llvm_unreachable(AssertionMessage.c_str());
+    }
+#endif
+    if (evaluated) {
+      evaluatorChecker = EvalCallChecker.Checker->getCheckerName();
+      Dst.insert(checkDst);
+#ifdef NDEBUG
+      break; // on release don't check that no other checker also evals.
+#endif
     }
   }
+
+  return static_cast<bool>(evaluatorChecker);
 }
 
 /// Run checkers for the entire Translation Unit.
