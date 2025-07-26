@@ -93,8 +93,18 @@ Improvements to clang-query
 Improvements to clang-tidy
 --------------------------
 
+- The :program:`run-clang-tidy.py` and :program:`clang-tidy-diff.py` scripts
+  now run checks in parallel by default using all available hardware threads.
+  Both scripts display the number of threads being used in their output.
+
 New checks
 ^^^^^^^^^^
+
+- New :doc:`llvm-mlir-op-builder
+  <clang-tidy/checks/llvm/use-new-mlir-op-builder>` check.
+
+  Checks for uses of MLIR's old/to be deprecated ``OpBuilder::create<T>`` form
+  and suggests using ``T::create`` instead.
 
 New check aliases
 ^^^^^^^^^^^^^^^^^
@@ -117,6 +127,16 @@ Changes in existing checks
 
 - Improved :doc:`misc-header-include-cycle
   <clang-tidy/checks/misc/header-include-cycle>` check performance.
+
+- Improved :doc:`modernize-use-std-format
+  <clang-tidy/checks/modernize/use-std-format>` check to correctly match
+  when the format string is converted to a different type by an implicit
+  constructor call.
+
+- Improved :doc:`modernize-use-std-print
+  <clang-tidy/checks/modernize/use-std-print>` check to correctly match
+  when the format string is converted to a different type by an implicit
+  constructor call.
 
 - Improved :doc:`portability-template-virtual-member-function
   <clang-tidy/checks/portability/template-virtual-member-function>` check to
