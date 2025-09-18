@@ -144,6 +144,26 @@ static StringRef asPreposition(BadOffsetKind Problem) {
   return Prepositions[static_cast<int>(Problem)];
 }
 
+struct BoundsFrontend : public CheckerFrontend {
+public:
+  BoundsFrontend(StringRef MainMsg, StringRef PotentialMsg, StringRef NoteMsg, bool ActualAccess) : MainMsg(MainMsg), PotentialMsg(PotentialMsg), NoteMsg(NoteMsg), ActualAccess(ActualAccess), BT(this, "Out-of-bound access", categories::LogicError, /*SuppressOnSink=*/!ActualAccess), TaintBT(this, "Out-of-bound access", categories::TaintedData, /*SuppressOnSink=*/!ActualAccess) {}
+  StringRef MainMsg;
+  StringRef PotentialMsg;
+  StringRef NoteMsg;
+  bool ActualAccess;
+  const BugType BT;
+  const BugType TaintBT;
+
+  Messages getNonTaintMsgs(const ASTContext &ACtx,
+                                const MemSpaceRegion *Space,
+                                const SubRegion *Region, NonLoc Offset,
+                                std::optional<NonLoc> Extent, SVal Location,
+                                BadOffsetKind Problem) const;
+  Messages getTaintMsgs(const MemSpaceRegion *Space,
+                             const SubRegion *Region, const char *OffsetName,
+                             bool AlsoMentionUnderflow) const;
+};
+
 // NOTE: The `ArraySubscriptExpr` and `UnaryOperator` callbacks are `PostStmt`
 // instead of `PreStmt` because the current implementation passes the whole
 // expression to `CheckerContext::getSVal()` which only works after the
@@ -151,15 +171,19 @@ static StringRef asPreposition(BadOffsetKind Problem) {
 // callbacks, we'd need to duplicate the logic that evaluates these
 // expressions.) The `MemberExpr` callback would work as `PreStmt` but it's
 // defined as `PostStmt` for the sake of consistency with the other callbacks.
-class ArrayBoundChecker : public Checker<check::PostStmt<ArraySubscriptExpr>,
-                                         check::PostStmt<UnaryOperator>,
-                                         check::PostStmt<MemberExpr>> {
-  BugType BT{this, "Out-of-bound access"};
-  BugType TaintBT{this, "Out-of-bound access", categories::TaintedData};
+// The callback for `ReturnStmt` is implemented as a `PreStmt` because that's
+// the more natural for checking a precondition, but it would probably also
+// work as a `PostStmt`.
+class ArrayBoundChecker : public CheckerFamily<check::PostStmt<ArraySubscriptExpr>,
+                                           check::PostStmt<UnaryOperator>,
+                                           check::PostStmt<MemberExpr>,
+                                           check::PreStmt<ReturnStmt>> {
+  BoundsFrontend ArrayBound{"Out of bound access", "Potential out of bound access", "Access of", /*ActualAccess=*/true};
+  BoundsFrontend ReturnPtrRange{"Returning out of bound pointer", "Returning potentially out of bound pointer", "Returning pointer to", /*ActualAccess=*/false};
 
-  void performCheck(const Expr *E, CheckerContext &C) const;
+  void performCheck(const BoundsFrontend &FE, const Expr *E, CheckerContext &C) const;
 
-  void reportOOB(CheckerContext &C, ProgramStateRef ErrorState, Messages Msgs,
+  void reportOOB(const BoundsFrontend &FE, CheckerContext &C, ProgramStateRef ErrorState, Messages Msgs,
                  NonLoc Offset, std::optional<NonLoc> Extent,
                  bool IsTaintBug = false) const;
 
@@ -178,16 +202,25 @@ class ArrayBoundChecker : public Checker<check::PostStmt<ArraySubscriptExpr>,
 
 public:
   void checkPostStmt(const ArraySubscriptExpr *E, CheckerContext &C) const {
-    performCheck(E, C);
+    performCheck(ArrayBound, E, C);
   }
   void checkPostStmt(const UnaryOperator *E, CheckerContext &C) const {
     if (E->getOpcode() == UO_Deref)
-      performCheck(E, C);
+      performCheck(ArrayBound, E, C);
   }
   void checkPostStmt(const MemberExpr *E, CheckerContext &C) const {
     if (E->isArrow())
-      performCheck(E->getBase(), C);
+      performCheck(ArrayBound, E->getBase(), C);
   }
+  void checkPreStmt(const ReturnStmt *RS, CheckerContext &C) const {
+    const Expr *RetVal = RS->getRetValue();
+    // FIXME: using `isPointerType` instead of `isAnyPointerType` excludes
+    // Objective-C object pointers. Is this the right approach?
+    if (RetVal->getType()->isPointerType())
+      performCheck(ReturnPtrRange, RetVal, C);
+  }
+
+  StringRef getDebugTag() const override { return "ArrayBoundChecker"; }
 };
 
 } // anonymous namespace
@@ -421,11 +454,11 @@ static bool tryDividePair(std::optional<int64_t> &Val1,
   return true;
 }
 
-static Messages getNonTaintMsgs(const ASTContext &ACtx,
+Messages BoundsFrontend::getNonTaintMsgs(const ASTContext &ACtx,
                                 const MemSpaceRegion *Space,
                                 const SubRegion *Region, NonLoc Offset,
                                 std::optional<NonLoc> Extent, SVal Location,
-                                BadOffsetKind Problem) {
+                                BadOffsetKind Problem) const {
   std::string RegName = getRegionName(Space, Region);
   const auto *EReg = Location.getAsRegion()->getAs<ElementRegion>();
   assert(EReg && "this checker only handles element access");
@@ -441,7 +474,7 @@ static Messages getNonTaintMsgs(const ASTContext &ACtx,
 
   SmallString<256> Buf;
   llvm::raw_svector_ostream Out(Buf);
-  Out << "Access of ";
+  Out << NoteMsg << " ";
   if (OffsetN && !ExtentN && !UseByteOffsets) {
     // If the offset is reported as an index, then the report must mention the
     // element type (because it is not always clear from the code). It's more
@@ -473,19 +506,19 @@ static Messages getNonTaintMsgs(const ASTContext &ACtx,
       Out << "s";
   }
 
-  return {formatv("Out of bound access to memory {0} {1}",
-                  asPreposition(Problem), RegName),
+  return {formatv("{0} to memory {1} {2}",
+                  MainMsg, asPreposition(Problem), RegName),
           std::string(Buf)};
 }
 
-static Messages getTaintMsgs(const MemSpaceRegion *Space,
+Messages BoundsFrontend::getTaintMsgs(const MemSpaceRegion *Space,
                              const SubRegion *Region, const char *OffsetName,
-                             bool AlsoMentionUnderflow) {
+                             bool AlsoMentionUnderflow) const {
   std::string RegName = getRegionName(Space, Region);
-  return {formatv("Potential out of bound access to {0} with tainted {1}",
-                  RegName, OffsetName),
-          formatv("Access of {0} with a tainted {1} that may be {2}too large",
-                  RegName, OffsetName,
+  return {formatv("{0} to {1} with tainted {2}",
+                  PotentialMsg, RegName, OffsetName),
+          formatv("{0} {1} with a tainted {2} that may be {3}too large",
+                  NoteMsg, RegName, OffsetName,
                   AlsoMentionUnderflow ? "negative or " : "")};
 }
 
@@ -573,7 +606,7 @@ bool StateUpdateReporter::providesInformationAboutInteresting(
   return false;
 }
 
-void ArrayBoundChecker::performCheck(const Expr *E, CheckerContext &C) const {
+void ArrayBoundChecker::performCheck(const BoundsFrontend &FE, const Expr *E, CheckerContext &C) const {
   const SVal Location = C.getSVal(E);
 
   // The header ctype.h (from e.g. glibc) implements the isXXXXX() macros as
@@ -595,9 +628,18 @@ void ArrayBoundChecker::performCheck(const Expr *E, CheckerContext &C) const {
 
   auto [Reg, ByteOffset] = *RawOffset;
 
-  // The state updates will be reported as a single note tag, which will be
-  // composed by this helper class.
+  // When `performCheck` is called for actual access (e.g. array indexing,
+  // dereference) and the offset _may be_ in bounds, the analyzer assumes that
+  // it _is_ in bounds. This helper class will compose a single note tag which
+  // describes these assumptions for the user.
   StateUpdateReporter SUR(Reg, ByteOffset, E, C);
+  // When `PerforCheck` is called for returned pointers values and the offset
+  // _may be_ in bounds, the analyzer does not make new assumptions that would
+  // "prematurely" constrain the offset and discard some useful reports.
+  // However, we still want to perform the workaround transitions that
+  // eliminate the impossible "unsigned variable holds negative value" branches
+  // which are sometimes introduces by deficiencies of the cast modeling.
+  ProgramStateRef WorkaroundTransitionTo = nullptr;
 
   // CHECK LOWER BOUND
   const MemSpaceRegion *Space = Reg->getMemorySpace(State);
@@ -638,15 +680,18 @@ void ArrayBoundChecker::performCheck(const Expr *E, CheckerContext &C) const {
           return;
         }
         // Otherwise continue on the 'WithinLowerBound' branch where the
-        // unsigned index _is_ non-negative. Don't mention this assumption as a
-        // note tag, because it would just confuse the users!
+        // unsigned index _is_ non-negative. This workaround assumption is not
+        // mentioned in the note tag (it would just confuse the users) and it
+        // is recorded even when other assumptions are discarded becasuse the
+        // `performCheck` call is not caused by actual access.
+        WorkaroundTransitionTo = WithinLowerBound;
       } else {
         if (!WithinLowerBound) {
           // ...and it cannot be valid (>= 0), so report an error.
-          Messages Msgs = getNonTaintMsgs(C.getASTContext(), Space, Reg,
+          Messages Msgs = FE.getNonTaintMsgs(C.getASTContext(), Space, Reg,
                                           ByteOffset, /*Extent=*/std::nullopt,
                                           Location, BadOffsetKind::Negative);
-          reportOOB(C, PrecedesLowerBound, Msgs, ByteOffset, std::nullopt);
+          reportOOB(FE, C, PrecedesLowerBound, Msgs, ByteOffset, std::nullopt);
           return;
         }
         // ...but it can be valid as well, so the checker will (optimistically)
@@ -683,17 +728,16 @@ void ArrayBoundChecker::performCheck(const Expr *E, CheckerContext &C) const {
         // expression that calculates the past-the-end pointer.
         if (isIdiomaticPastTheEndPtr(E, ExceedsUpperBound, ByteOffset,
                                      *KnownSize, C)) {
-          C.addTransition(ExceedsUpperBound, SUR.createNoteTag(C));
-          return;
+          goto AddTransitionIfNeeded;
         }
 
         BadOffsetKind Problem = AlsoMentionUnderflow
                                     ? BadOffsetKind::Indeterminate
                                     : BadOffsetKind::Overflowing;
         Messages Msgs =
-            getNonTaintMsgs(C.getASTContext(), Space, Reg, ByteOffset,
+            FE.getNonTaintMsgs(C.getASTContext(), Space, Reg, ByteOffset,
                             *KnownSize, Location, Problem);
-        reportOOB(C, ExceedsUpperBound, Msgs, ByteOffset, KnownSize);
+        reportOOB(FE, C, ExceedsUpperBound, Msgs, ByteOffset, KnownSize);
         return;
       }
       // ...and it can be valid as well...
@@ -709,8 +753,8 @@ void ArrayBoundChecker::performCheck(const Expr *E, CheckerContext &C) const {
             OffsetName = "index";
 
         Messages Msgs =
-            getTaintMsgs(Space, Reg, OffsetName, AlsoMentionUnderflow);
-        reportOOB(C, ExceedsUpperBound, Msgs, ByteOffset, KnownSize,
+            FE.getTaintMsgs(Space, Reg, OffsetName, AlsoMentionUnderflow);
+        reportOOB(FE, C, ExceedsUpperBound, Msgs, ByteOffset, KnownSize,
                   /*IsTaintBug=*/true);
         return;
       }
@@ -725,9 +769,18 @@ void ArrayBoundChecker::performCheck(const Expr *E, CheckerContext &C) const {
     if (WithinUpperBound)
       State = WithinUpperBound;
   }
-
-  // Add a transition, reporting the state updates that we accumulated.
-  C.addTransition(State, SUR.createNoteTag(C));
+AddTransitionIfNeeded:
+  if (FE.ActualAccess) {
+    // If this `performCheck` is caused by actual access of the given element,
+    // transition to a new state with the added constraints and report these
+    // new assuptions to the user.
+    C.addTransition(State, SUR.createNoteTag(C));
+  } else if (WorkaroundTransitionTo) {
+    // Otherwise (in a ReturnPtrRange check) only record the workaround
+    // assumption that eliminates impossible cases introduced by the buggy
+    // modeling of casts in the analyzer.
+    C.addTransition(WorkaroundTransitionTo);
+  }
 }
 
 void ArrayBoundChecker::markPartsInteresting(PathSensitiveBugReport &BR,
@@ -753,17 +806,17 @@ void ArrayBoundChecker::markPartsInteresting(PathSensitiveBugReport &BR,
   }
 }
 
-void ArrayBoundChecker::reportOOB(CheckerContext &C, ProgramStateRef ErrorState,
+void ArrayBoundChecker::reportOOB(const BoundsFrontend &FE, CheckerContext &C, ProgramStateRef ErrorState,
                                   Messages Msgs, NonLoc Offset,
                                   std::optional<NonLoc> Extent,
                                   bool IsTaintBug /*=false*/) const {
 
-  ExplodedNode *ErrorNode = C.generateErrorNode(ErrorState);
+  ExplodedNode *ErrorNode = FE.ActualAccess ? C.generateErrorNode(ErrorState) : C.generateNonFatalErrorNode(ErrorState);
   if (!ErrorNode)
     return;
 
   auto BR = std::make_unique<PathSensitiveBugReport>(
-      IsTaintBug ? TaintBT : BT, Msgs.Short, Msgs.Full, ErrorNode);
+      IsTaintBug ? FE.TaintBT : FE.BT, Msgs.Short, Msgs.Full, ErrorNode);
 
   // FIXME: ideally we would just call trackExpressionValue() and that would
   // "do the right thing": mark the relevant symbols as interesting, track the
