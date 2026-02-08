@@ -856,8 +856,14 @@ let Predicates = [HasStdExtP] in {
   def PPAIRO_B    : RVPBinary_rr<0b0110, 0b00, 0b100, "ppairo.b">;
   def PPAIRO_H    : RVPBinary_rr<0b0110, 0b01, 0b100, "ppairo.h">;
 } // Predicates = [HasStdExtP]
+let Predicates = [HasStdExtP, IsRV32] in {
+  // This should be a MnemonicAlias, but InstAlias produces better errors.
+  def : InstAlias<"ppaire.h $rd, $rs1, $rs2", (PACK GPR:$rd, GPR:$rs1, GPR:$rs2), 0>;
+}
 let Predicates = [HasStdExtP, IsRV64] in {
   def PPAIRE_H    : RVPBinary_rr<0b0000, 0b01, 0b100, "ppaire.h">;
+  // This should be a MnemonicAlias, but InstAlias produces better errors.
+  def : InstAlias<"ppaire.w $rd, $rs1, $rs2", (PACK GPR:$rd, GPR:$rs1, GPR:$rs2), 0>;
 
   def PPAIREO_W   : RVPBinary_rr<0b0010, 0b11, 0b100, "ppaireo.w">;
 
@@ -1476,6 +1482,16 @@ let Predicates = [HasStdExtP, IsRV32] in {
 
 def riscv_absw : RVSDNode<"ABSW", SDT_RISCVIntUnaryOpW>;
 def riscv_clsw : RVSDNode<"CLSW", SDT_RISCVIntUnaryOpW>;
+
+def SDT_RISCVIntBinOpD : SDTypeProfile<2, 4, [SDTCisVT<0, i32>,
+                                              SDTCisVT<1, i32>,
+                                              SDTCisSameAs<0, 2>,
+                                              SDTCisSameAs<1, 3>,
+                                              SDTCisSameAs<0, 4>,
+                                              SDTCisSameAs<1, 5>]>;
+def riscv_addd : RVSDNode<"ADDD", SDT_RISCVIntBinOpD,
+                          [SDNPCommutative, SDNPAssociative]>;
+def riscv_subd : RVSDNode<"SUBD", SDT_RISCVIntBinOpD>;
 
 // Averaging subtraction, (a - b) >> 2
 def riscv_asub : RVSDNode<"ASUB", SDTIntBinOp>;
