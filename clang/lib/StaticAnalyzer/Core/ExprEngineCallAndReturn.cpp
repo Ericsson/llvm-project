@@ -39,8 +39,7 @@ STAT_COUNTER(NumInlinedCalls, "The # of times we inlined a call");
 STAT_COUNTER(NumReachedInlineCountMax,
              "The # of times we reached inline count maximum");
 
-void ExprEngine::processCallEnter(NodeBuilderContext& BC, CallEnter CE,
-                                  ExplodedNode *Pred) {
+void ExprEngine::processCallEnter(CallEnter CE, ExplodedNode *Pred) {
   // Get the entry block in the CFG of the callee.
   const CFGBlock *Entry = CE.getEntry();
 
@@ -62,8 +61,13 @@ void ExprEngine::processCallEnter(NodeBuilderContext& BC, CallEnter CE,
   ExplodedNode *Node = G.getNode(Loc, state, false, &isNew);
   Node->addPredecessor(Pred, G);
   if (isNew) {
+    // FIXME: In the `processBeginOfFunction` callback
+    // `ExprEngine::getCurrLocationContext()` can be different from the
+    // `LocationContext` queried from e.g. the `ExplodedNode`s. I'm not
+    // touching this now because this commit is NFC; but in the future it would
+    // be nice to avoid this inconsistency.
     ExplodedNodeSet DstBegin;
-    processBeginOfFunction(BC, Node, DstBegin, Loc);
+    processBeginOfFunction(Node, DstBegin, Loc);
     Engine.enqueue(DstBegin);
   }
 }

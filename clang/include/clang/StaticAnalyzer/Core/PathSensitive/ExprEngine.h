@@ -413,8 +413,7 @@ public:
 
   /// Called by CoreEngine.  Used to notify checkers that processing a
   /// function has begun. Called for both inlined and top-level functions.
-  void processBeginOfFunction(NodeBuilderContext &BC,
-                              ExplodedNode *Pred, ExplodedNodeSet &Dst,
+  void processBeginOfFunction(ExplodedNode *Pred, ExplodedNodeSet &Dst,
                               const BlockEdge &L);
 
   /// Called by CoreEngine.  Used to notify checkers that processing a
@@ -425,8 +424,7 @@ public:
   void removeDeadOnEndOfFunction(ExplodedNode *Pred, ExplodedNodeSet &Dst);
 
   /// Generate the entry node of the callee.
-  void processCallEnter(NodeBuilderContext& BC, CallEnter CE,
-                        ExplodedNode *Pred);
+  void processCallEnter(CallEnter CE, ExplodedNode *Pred);
 
   /// Generate the sequence of nodes that simulate the call exit and the post
   /// visit for CallExpr.

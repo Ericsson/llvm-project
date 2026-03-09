@@ -119,9 +119,10 @@ bool CoreEngine::ExecuteWorkList(const LocationContext *L, unsigned MaxSteps,
     assert(IsNew);
     G.designateAsRoot(Node);
 
-    NodeBuilderContext BuilderCtx(*this, StartLoc.getDst(), Node);
+    ExprEng.setCurrLocationContextAndBlock(Node->getLocationContext(), Succ);
+
     ExplodedNodeSet DstBegin;
-    ExprEng.processBeginOfFunction(BuilderCtx, Node, DstBegin, StartLoc);
+    ExprEng.processBeginOfFunction(Node, DstBegin, StartLoc);
 
     enqueue(DstBegin);
   }
@@ -492,8 +493,9 @@ void CoreEngine::HandleBlockExit(const CFGBlock * B, ExplodedNode *Pred) {
 }
 
 void CoreEngine::HandleCallEnter(const CallEnter &CE, ExplodedNode *Pred) {
-  NodeBuilderContext BuilderCtx(*this, CE.getEntry(), Pred);
-  ExprEng.processCallEnter(BuilderCtx, CE, Pred);
+  ExprEng.setCurrLocationContextAndBlock(Pred->getLocationContext(),
+                                         CE.getEntry());
+  ExprEng.processCallEnter(CE, Pred);
 }
 
 void CoreEngine::HandleBranch(const Stmt *Cond, const Stmt *Term,

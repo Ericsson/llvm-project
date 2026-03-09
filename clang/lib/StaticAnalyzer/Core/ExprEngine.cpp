@@ -3008,11 +3008,9 @@ void ExprEngine::processIndirectGoto(IndirectGotoNodeBuilder &Builder,
     Builder.generateNode(Succ, State, Pred);
 }
 
-void ExprEngine::processBeginOfFunction(NodeBuilderContext &BC,
-                                        ExplodedNode *Pred,
+void ExprEngine::processBeginOfFunction(ExplodedNode *Pred,
                                         ExplodedNodeSet &Dst,
                                         const BlockEdge &L) {
-  SaveAndRestore<const NodeBuilderContext *> NodeContextRAII(currBldrCtx, &BC);
   getCheckerManager().runCheckersForBeginFunction(Dst, L, Pred, *this);
 }
 
