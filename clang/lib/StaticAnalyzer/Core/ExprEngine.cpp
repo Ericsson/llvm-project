@@ -2639,17 +2639,14 @@ void ExprEngine::processCFGBlockEntrance(const BlockEdge &L,
   }
 }
 
-void ExprEngine::runCheckersForBlockEntrance(const NodeBuilderContext &BldCtx,
-                                             const BlockEntrance &Entrance,
+void ExprEngine::runCheckersForBlockEntrance(const BlockEntrance &Entrance,
                                              ExplodedNode *Pred,
                                              ExplodedNodeSet &Dst) {
   llvm::PrettyStackTraceFormat CrashInfo(
       "Processing block entrance B%d -> B%d",
       Entrance.getPreviousBlock()->getBlockID(),
       Entrance.getBlock()->getBlockID());
-  currBldrCtx = &BldCtx;
   getCheckerManager().runCheckersForBlockEntrance(Dst, Pred, Entrance, *this);
-  currBldrCtx = nullptr;
 }
 
 //===----------------------------------------------------------------------===//
@@ -3022,8 +3019,7 @@ void ExprEngine::processBeginOfFunction(NodeBuilderContext &BC,
 
 /// ProcessEndPath - Called by CoreEngine.  Used to generate end-of-path
 ///  nodes when the control reaches the end of a function.
-void ExprEngine::processEndOfFunction(NodeBuilderContext& BC,
-                                      ExplodedNode *Pred,
+void ExprEngine::processEndOfFunction(ExplodedNode *Pred,
                                       const ReturnStmt *RS) {
   ProgramStateRef State = Pred->getState();
 
@@ -3063,7 +3059,7 @@ void ExprEngine::processEndOfFunction(NodeBuilderContext& BC,
   // Perform the transition with cleanups.
   if (State != Pred->getState()) {
     ExplodedNodeSet PostCleanup;
-    NodeBuilder Bldr(Pred, PostCleanup, BC);
+    NodeBuilder Bldr(Pred, PostCleanup, *currBldrCtx);
     Pred = Bldr.generateNode(Pred->getLocation(), State, Pred);
     if (!Pred) {
       // The node with clean temporaries already exists. We might have reached
@@ -3079,13 +3075,13 @@ void ExprEngine::processEndOfFunction(NodeBuilderContext& BC,
   if (Pred->getLocationContext()->inTopFrame()) {
     // Remove dead symbols.
     ExplodedNodeSet AfterRemovedDead;
-    removeDeadOnEndOfFunction(BC, Pred, AfterRemovedDead);
+    removeDeadOnEndOfFunction(Pred, AfterRemovedDead);
 
     // Notify checkers.
     for (const auto I : AfterRemovedDead)
-      getCheckerManager().runCheckersForEndFunction(BC, Dst, I, *this, RS);
+      getCheckerManager().runCheckersForEndFunction(Dst, I, *this, RS);
   } else {
-    getCheckerManager().runCheckersForEndFunction(BC, Dst, Pred, *this, RS);
+    getCheckerManager().runCheckersForEndFunction(Dst, Pred, *this, RS);
   }
 
   Engine.enqueueEndOfFunction(Dst, RS);

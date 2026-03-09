@@ -267,7 +267,7 @@ void CoreEngine::dispatchWorkItem(ExplodedNode *Pred, ProgramPoint Loc,
 
 void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
   const CFGBlock *Blk = L.getDst();
-  NodeBuilderContext BuilderCtx(*this, Blk, Pred);
+  ExprEng.setCurrLocationContextAndBlock(Pred->getLocationContext(), Blk);
 
   // Mark this block as visited.
   const LocationContext *LC = Pred->getLocationContext();
@@ -288,9 +288,7 @@ void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
         },
         /*IsPrunable=*/true));
     // Perform the transition.
-    ExplodedNodeSet Dst;
-    NodeBuilder Bldr(Pred, Dst, BuilderCtx);
-    Pred = Bldr.generateNode(P, Pred->getState(), Pred);
+    Pred = makeNode(P, Pred->getState(), Pred);
     if (!Pred)
       return;
   }
@@ -314,11 +312,11 @@ void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
 
     ExplodedNodeSet CheckerNodes;
     BlockEntrance BE(L.getSrc(), L.getDst(), Pred->getLocationContext());
-    ExprEng.runCheckersForBlockEntrance(BuilderCtx, BE, Pred, CheckerNodes);
+    ExprEng.runCheckersForBlockEntrance(BE, Pred, CheckerNodes);
 
     // Process the final state transition.
     for (ExplodedNode *P : CheckerNodes) {
-      ExprEng.processEndOfFunction(BuilderCtx, P, RS);
+      ExprEng.processEndOfFunction(P, RS);
     }
 
     // This path is done. Don't enqueue any more nodes.
@@ -328,7 +326,7 @@ void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
   // Call into the ExprEngine to process entering the CFGBlock.
   BlockEntrance BE(L.getSrc(), L.getDst(), Pred->getLocationContext());
   ExplodedNodeSet DstNodes;
-  NodeBuilder Builder(Pred, DstNodes, BuilderCtx);
+  NodeBuilder Builder(Pred, DstNodes, ExprEng.getBuilderContext());
   ExprEng.processCFGBlockEntrance(L, BE, Builder, Pred);
 
   // Auto-generate a node.
@@ -338,7 +336,7 @@ void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
 
   ExplodedNodeSet CheckerNodes;
   for (auto *N : DstNodes) {
-    ExprEng.runCheckersForBlockEntrance(BuilderCtx, BE, N, CheckerNodes);
+    ExprEng.runCheckersForBlockEntrance(BE, N, CheckerNodes);
   }
 
   // Enqueue nodes onto the worklist.

@@ -158,8 +158,7 @@ static SVal adjustReturnValue(SVal V, QualType ExpectedTy, QualType ActualTy,
   return UnknownVal();
 }
 
-void ExprEngine::removeDeadOnEndOfFunction(NodeBuilderContext& BC,
-                                           ExplodedNode *Pred,
+void ExprEngine::removeDeadOnEndOfFunction(ExplodedNode *Pred,
                                            ExplodedNodeSet &Dst) {
   // Find the last statement in the function and the corresponding basic block.
   const Stmt *LastSt = nullptr;
@@ -175,7 +174,6 @@ void ExprEngine::removeDeadOnEndOfFunction(NodeBuilderContext& BC,
   // point will be associated. However, we only want to use LastStmt as a
   // reference for what to clean up if it's a ReturnStmt; otherwise, everything
   // is dead.
-  SaveAndRestore<const NodeBuilderContext *> NodeContextRAII(currBldrCtx, &BC);
   const LocationContext *LCtx = Pred->getLocationContext();
   removeDead(Pred, Dst, dyn_cast<ReturnStmt>(LastSt), LCtx,
              LCtx->getAnalysisDeclContext()->getBody(),

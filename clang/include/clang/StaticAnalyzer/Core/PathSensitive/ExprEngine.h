@@ -375,8 +375,7 @@ public:
   void processCFGBlockEntrance(const BlockEdge &L, const BlockEntrance &BE,
                                NodeBuilder &Builder, ExplodedNode *Pred);
 
-  void runCheckersForBlockEntrance(const NodeBuilderContext &BldCtx,
-                                   const BlockEntrance &Entrance,
+  void runCheckersForBlockEntrance(const BlockEntrance &Entrance,
                                    ExplodedNode *Pred, ExplodedNodeSet &Dst);
 
   /// ProcessBranch - Called by CoreEngine. Used to generate successor nodes by
@@ -420,14 +419,10 @@ public:
 
   /// Called by CoreEngine.  Used to notify checkers that processing a
   /// function has ended. Called for both inlined and top-level functions.
-  void processEndOfFunction(NodeBuilderContext& BC,
-                            ExplodedNode *Pred,
-                            const ReturnStmt *RS = nullptr);
+  void processEndOfFunction(ExplodedNode *Pred, const ReturnStmt *RS = nullptr);
 
   /// Remove dead bindings/symbols before exiting a function.
-  void removeDeadOnEndOfFunction(NodeBuilderContext& BC,
-                                 ExplodedNode *Pred,
-                                 ExplodedNodeSet &Dst);
+  void removeDeadOnEndOfFunction(ExplodedNode *Pred, ExplodedNodeSet &Dst);
 
   /// Generate the entry node of the callee.
   void processCallEnter(NodeBuilderContext& BC, CallEnter CE,
