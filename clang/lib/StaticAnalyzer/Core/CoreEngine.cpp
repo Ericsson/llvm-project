@@ -355,8 +355,9 @@ void CoreEngine::HandleBlockEntrance(const BlockEntrance &L,
 
   // Process the entrance of the block.
   if (std::optional<CFGElement> E = L.getFirstElement()) {
-    NodeBuilderContext Ctx(*this, L.getBlock(), Pred);
-    ExprEng.processCFGElement(*E, Pred, 0, &Ctx);
+    ExprEng.setCurrLocationContextAndBlock(Pred->getLocationContext(),
+                                           L.getBlock());
+    ExprEng.processCFGElement(*E, Pred, 0);
   } else
     HandleBlockExit(L.getBlock(), Pred);
 }
@@ -541,8 +542,8 @@ void CoreEngine::HandlePostStmt(const CFGBlock *B, unsigned StmtIdx,
   if (StmtIdx == B->size())
     HandleBlockExit(B, Pred);
   else {
-    NodeBuilderContext Ctx(*this, B, Pred);
-    ExprEng.processCFGElement((*B)[StmtIdx], Pred, StmtIdx, &Ctx);
+    ExprEng.setCurrLocationContextAndBlock(Pred->getLocationContext(), B);
+    ExprEng.processCFGElement((*B)[StmtIdx], Pred, StmtIdx);
   }
 }
 

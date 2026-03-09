@@ -966,9 +966,8 @@ void ExprEngine::processEndWorklist() {
 }
 
 void ExprEngine::processCFGElement(const CFGElement E, ExplodedNode *Pred,
-                                   unsigned StmtIdx, NodeBuilderContext *Ctx) {
+                                   unsigned StmtIdx) {
   currStmtIdx = StmtIdx;
-  currBldrCtx = Ctx;
 
   switch (E.getKind()) {
     case CFGElement::Statement:

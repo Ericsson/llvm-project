@@ -348,7 +348,7 @@ public:
   /// processCFGElement - Called by CoreEngine. Used to generate new successor
   ///  nodes by processing the 'effects' of a CFG element.
   void processCFGElement(const CFGElement E, ExplodedNode *Pred,
-                         unsigned StmtIdx, NodeBuilderContext *Ctx);
+                         unsigned StmtIdx);
 
   void ProcessStmt(const Stmt *S, ExplodedNode *Pred);
 
