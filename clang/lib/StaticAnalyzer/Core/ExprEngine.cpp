@@ -3058,9 +3058,7 @@ void ExprEngine::processEndOfFunction(ExplodedNode *Pred,
 
   // Perform the transition with cleanups.
   if (State != Pred->getState()) {
-    ExplodedNodeSet PostCleanup;
-    NodeBuilder Bldr(Pred, PostCleanup, *currBldrCtx);
-    Pred = Bldr.generateNode(Pred->getLocation(), State, Pred);
+    Pred = Engine.makeNode(Pred->getLocation(), State, Pred);
     if (!Pred) {
       // The node with clean temporaries already exists. We might have reached
       // it on a path on which we initialize different temporaries.
