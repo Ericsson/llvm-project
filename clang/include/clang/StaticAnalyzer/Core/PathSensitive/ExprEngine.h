@@ -178,7 +178,7 @@ private:
   const NodeBuilderContext *currBldrCtx = nullptr;
   /// Historically `currBldrCtx` pointed to a local variable in some stack
   /// frame. This field is introduced as a temporary measure to allow a gradual
-  /// transition. Do not reference this outside of setLocationContextAndBlock!
+  /// transition. Only use this in {re,}setLocationContextAndBlock!
   /// TODO: Remove this temporary hack.
   std::optional<NodeBuilderContext> OwnedCurrBldrCtx;
 
@@ -247,6 +247,11 @@ public:
                                       const CFGBlock *B) {
     OwnedCurrBldrCtx.emplace(Engine, B, LC);
     currBldrCtx = &*OwnedCurrBldrCtx;
+  }
+
+  void resetCurrLocationContextAndBlock() {
+    currBldrCtx = nullptr;
+    OwnedCurrBldrCtx = std::nullopt;
   }
 
   const NodeBuilderContext &getBuilderContext() const {

@@ -216,6 +216,14 @@ void CoreEngine::dispatchWorkItem(ExplodedNode *Pred, ProgramPoint Loc,
                              return timeTraceMetadata(Pred, Loc);
                            }};
   PrettyStackTraceLocationContext CrashInfo(Pred->getLocationContext());
+
+  // This work item is not necessarily related to the previous one, so
+  // the old current LocationContext and Block is no longer relevant.
+  // The new current LocationContext and Block should be set soon, but this
+  // guarantees that buggy access before that will trigger loud crashes instead
+  // of silently using stale data.
+  ExprEng.resetCurrLocationContextAndBlock();
+
   // Dispatch on the location type.
   switch (Loc.getKind()) {
     case ProgramPoint::BlockEdgeKind:
