@@ -294,9 +294,9 @@ void CoreEngine::HandleBlockEdge(const BlockEdge &L, ExplodedNode *Pred) {
   }
 
   // Check if we are entering the EXIT block.
-  if (Blk == &(L.getLocationContext()->getCFG()->getExit())) {
-    assert(L.getLocationContext()->getCFG()->getExit().empty() &&
-           "EXIT block cannot contain Stmts.");
+  const CFGBlock &ExitBlk = L.getLocationContext()->getCFG()->getExit();
+  if (Blk == &ExitBlk) {
+    assert(ExitBlk.empty() && "EXIT block cannot contain Stmts.");
 
     // Get return statement..
     const ReturnStmt *RS = nullptr;
