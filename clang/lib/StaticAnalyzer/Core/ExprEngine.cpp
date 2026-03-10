@@ -2948,7 +2948,6 @@ void ExprEngine::processBranch(
         Builder.generateNode(StFalse, false, PredN);
     }
   }
-  currBldrCtx = nullptr;
 }
 
 /// The GDM component containing the set of global variables which have been
@@ -2971,8 +2970,6 @@ void ExprEngine::processStaticInitializer(const DeclStmt *DS,
   }
 
   Builder.generateNode(state, initHasRun, Pred);
-
-  currBldrCtx = nullptr;
 }
 
 /// processIndirectGoto - Called by CoreEngine.  Used to generate successor
@@ -3160,8 +3157,6 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
 
     Builder.generateDefaultCaseNode(State, Node);
   }
-
-  currBldrCtx = nullptr;
 }
 
 //===----------------------------------------------------------------------===//
