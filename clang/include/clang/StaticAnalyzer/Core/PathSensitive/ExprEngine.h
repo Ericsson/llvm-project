@@ -246,6 +246,10 @@ public:
   // This implementation is a temporary measure to allow a gradual transition.
   void setCurrLocationContextAndBlock(const LocationContext *LC,
                                       const CFGBlock *B) {
+    // Note that there is a call to resetCurrLocationContextAndBlock at the
+    // beginning of dispatchWorkItem.
+    assert(!currBldrCtx && !OwnedCurrBldrCtx &&
+           "This should be called at most once per call to dispatchWorkItem");
     OwnedCurrBldrCtx.emplace(Engine, B, LC);
     currBldrCtx = &*OwnedCurrBldrCtx;
   }
