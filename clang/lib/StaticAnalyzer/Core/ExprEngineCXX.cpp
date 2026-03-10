@@ -127,7 +127,6 @@ SVal ExprEngine::makeElementRegion(ProgramStateRef State, SVal LValue,
 // In case when the prvalue is returned from the function (kind is one of
 // SimpleReturnedValueKind, CXX17ElidedCopyReturnedValueKind), then
 // it's materialization happens in context of the caller.
-// We pass BldrCtx explicitly, as currBldrCtx always refers to callee's context.
 SVal ExprEngine::computeObjectUnderConstruction(
     const Expr *E, ProgramStateRef State, unsigned NumVisitedCaller,
     const LocationContext *LCtx, const ConstructionContext *CC,
@@ -230,11 +229,9 @@ SVal ExprEngine::computeObjectUnderConstruction(
           assert(!isa<BlockInvocationContext>(CallerLCtx));
         }
 
-        NodeBuilderContext CallerBldrCtx(getCoreEngine(),
-                                         SFC->getCallSiteBlock(), CallerLCtx);
-        unsigned NumVisitedCaller = CallerBldrCtx.blockCount();
+        unsigned NVCaller = getNumVisited(CallerLCtx, SFC->getCallSiteBlock());
         return computeObjectUnderConstruction(
-            cast<Expr>(SFC->getCallSite()), State, NumVisitedCaller, CallerLCtx,
+            cast<Expr>(SFC->getCallSite()), State, NVCaller, CallerLCtx,
             RTC->getConstructionContext(), CallOpts);
       } else {
         // We are on the top frame of the analysis. We do not know where is the
