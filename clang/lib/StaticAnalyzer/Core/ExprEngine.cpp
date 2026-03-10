@@ -2846,7 +2846,7 @@ void ExprEngine::processBranch(
   if (const auto *Ex = dyn_cast<Expr>(Condition))
     Condition = Ex->IgnoreParens();
 
-  Condition = ResolveCondition(Condition, currBldrCtx->getBlock());
+  Condition = ResolveCondition(Condition, getCurrentBlock());
   PrettyStackTraceLoc CrashInfo(getContext().getSourceManager(),
                                 Condition->getBeginLoc(),
                                 "Error evaluating branch");
