@@ -563,7 +563,7 @@ std::optional<SVal> CallEvent::getReturnValueUnderConstruction() const {
   EvalCallOptions CallOpts;
   ExprEngine &Engine = getState()->getStateManager().getOwningEngine();
   SVal RetVal = Engine.computeObjectUnderConstruction(
-      getOriginExpr(), getState(), &Engine.getBuilderContext(),
+      getOriginExpr(), getState(), Engine.getBuilderContext().blockCount(),
       getLocationContext(), CC, CallOpts);
   return RetVal;
 }
