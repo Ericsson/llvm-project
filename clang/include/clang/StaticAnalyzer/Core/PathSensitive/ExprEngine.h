@@ -160,16 +160,17 @@ private:
 
   unsigned int currStmtIdx = 0;
 
-  /// Pointer to a so-called NodeBuilderContext object which has three
-  /// independent roles:
+  /// Pointer to a (so-called, somewhat misnamed) NodeBuilderContext object
+  /// which has three independent roles:
   /// - It holds a pointer to the CFGBlock that is currently under analysis.
   ///   (This is the primary way to get the current block.)
-  /// - It holds a pointer to the current LocationContext. (This is rarely used
-  ///   and may be 'stale', the location context is usually queried from an
-  ///   ExplodedNode or a ProgramPoint.)
+  /// - It holds a pointer to the current LocationContext. (This is rarely
+  ///   used, the location context is usually queried from a recent
+  ///   ExplodedNode. Unfortunately it seems that these two sources of truth
+  ///   are not always consistent.)
   /// - It can be used for constructing `NodeBuilder`s. Practically all
   ///   `NodeBuilder` objects are useless complications in the code, so I
-  ///   intend to replace them with direct use of `ExprEngine::makeNode`.
+  ///   intend to replace them with direct use of `CoreEngine::makeNode`.
   /// TODO: Eventually `currBldrCtx` should be replaced by two separate fields:
   /// `const CFGBlock *CurrBlock` & `const LocationContext *CurrLocationContext`
   /// that are kept up-to-date and are almost always non-null during the
@@ -264,10 +265,19 @@ public:
     return G.getRoot()->getLocation().getLocationContext();
   }
 
+  /// Get the 'current' location context corresponding to the current work item
+  /// (elementary analysis step handled by `dispatchWorkItem`).
+  /// FIXME: This sometimes (e.g. in some `BeginFunction` callbacks) differs
+  /// from the `LocationContext` that can be obtained from different sources
+  /// (e.g. a recent `ExplodedNode`). Traditionally this location context is
+  /// only used for block count calculations (`getNumVisited`); it is probably
+  /// wise to follow this tradition until the discrepancies are resolved.
   const LocationContext *getCurrentLocationContext() const {
     return currBldrCtx ? currBldrCtx->getLocationContext() : nullptr;
   }
 
+  /// Get the 'current' CFGBlock corresponding to the current work item
+  /// (elementary analysis step handled by `dispatchWorkItem`).
   const CFGBlock *getCurrentBlock() const {
     return currBldrCtx ? currBldrCtx->getBlock() : nullptr;
   }
