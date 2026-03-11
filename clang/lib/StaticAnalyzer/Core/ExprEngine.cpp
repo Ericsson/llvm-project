@@ -1143,7 +1143,7 @@ void ExprEngine::ProcessStmt(const Stmt *currStmt, ExplodedNode *Pred) {
   }
 
   // Enqueue the new nodes onto the work list.
-  Engine.enqueueStmtNodes(Dst, getCurrentBlock(), currStmtIdx);
+  Engine.enqueueStmtNodes(Dst, getCurrBlock(), currStmtIdx);
 }
 
 void ExprEngine::ProcessLoopExit(const Stmt* S, ExplodedNode *Pred) {
@@ -1158,7 +1158,7 @@ void ExprEngine::ProcessLoopExit(const Stmt* S, ExplodedNode *Pred) {
   LoopExit PP(S, Pred->getLocationContext());
   ExplodedNode *N = Engine.makeNode(PP, NewState, Pred);
   if (N && !N->isSink())
-    Engine.enqueueStmtNode(N, getCurrentBlock(), currStmtIdx);
+    Engine.enqueueStmtNode(N, getCurrBlock(), currStmtIdx);
 }
 
 void ExprEngine::ProcessInitializer(const CFGInitializer CFGInit,
@@ -1247,7 +1247,7 @@ void ExprEngine::ProcessInitializer(const CFGInitializer CFGInit,
   for (ExplodedNode *Pred : Tmp)
     Dst.Add(Engine.makeNode(PP, Pred->getState(), Pred));
   // Enqueue the new nodes onto the work list.
-  Engine.enqueueStmtNodes(Dst, getCurrentBlock(), currStmtIdx);
+  Engine.enqueueStmtNodes(Dst, getCurrBlock(), currStmtIdx);
 }
 
 std::pair<ProgramStateRef, uint64_t>
@@ -1311,7 +1311,7 @@ void ExprEngine::ProcessImplicitDtor(const CFGImplicitDtor D,
   }
 
   // Enqueue the new nodes onto the work list.
-  Engine.enqueueStmtNodes(Dst, getCurrentBlock(), currStmtIdx);
+  Engine.enqueueStmtNodes(Dst, getCurrBlock(), currStmtIdx);
 }
 
 void ExprEngine::ProcessNewAllocator(const CXXNewExpr *NE,
@@ -1330,7 +1330,7 @@ void ExprEngine::ProcessNewAllocator(const CXXNewExpr *NE,
                         getCFGElementRef());
     Dst.Add(Engine.makeNode(PP, Pred->getState(), Pred));
   }
-  Engine.enqueueStmtNodes(Dst, getCurrentBlock(), currStmtIdx);
+  Engine.enqueueStmtNodes(Dst, getCurrBlock(), currStmtIdx);
 }
 
 void ExprEngine::ProcessAutomaticObjDtor(const CFGAutomaticObjDtor Dtor,
@@ -1842,7 +1842,7 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::OMPMetaDirectiveClass:
     case Stmt::HLSLOutArgExprClass: {
       const ExplodedNode *node = Bldr.generateSink(S, Pred, Pred->getState());
-      Engine.addAbortedBlock(node, getCurrentBlock());
+      Engine.addAbortedBlock(node, getCurrBlock());
       break;
     }
 
@@ -2118,7 +2118,7 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
         Bldr.addNodes(Dst);
       } else {
         const ExplodedNode *node = Bldr.generateSink(S, Pred, Pred->getState());
-        Engine.addAbortedBlock(node, getCurrentBlock());
+        Engine.addAbortedBlock(node, getCurrBlock());
       }
       break;
 
@@ -2846,7 +2846,7 @@ void ExprEngine::processBranch(
   if (const auto *Ex = dyn_cast<Expr>(Condition))
     Condition = Ex->IgnoreParens();
 
-  Condition = ResolveCondition(Condition, getCurrentBlock());
+  Condition = ResolveCondition(Condition, getCurrBlock());
   PrettyStackTraceLoc CrashInfo(getContext().getSourceManager(),
                                 Condition->getBeginLoc(),
                                 "Error evaluating branch");

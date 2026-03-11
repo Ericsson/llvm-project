@@ -276,18 +276,18 @@ public:
   /// (e.g. a recent `ExplodedNode`). Traditionally this location context is
   /// only used for block count calculations (`getNumVisited`); it is probably
   /// wise to follow this tradition until the discrepancies are resolved.
-  const LocationContext *getCurrentLocationContext() const {
+  const LocationContext *getCurrLocationContext() const {
     return currBldrCtx ? currBldrCtx->getLocationContext() : nullptr;
   }
 
   /// Get the 'current' CFGBlock corresponding to the current work item
   /// (elementary analysis step handled by `dispatchWorkItem`).
-  const CFGBlock *getCurrentBlock() const {
+  const CFGBlock *getCurrBlock() const {
     return currBldrCtx ? currBldrCtx->getBlock() : nullptr;
   }
 
   ConstCFGElementRef getCFGElementRef() const {
-    return {getCurrentBlock(), currStmtIdx};
+    return {getCurrBlock(), currStmtIdx};
   }
 
   unsigned getNumVisited(const LocationContext *LC,
@@ -297,7 +297,7 @@ public:
   }
 
   unsigned getNumVisitedCurrent() const {
-    return getNumVisited(getCurrentLocationContext(), getCurrentBlock());
+    return getNumVisited(getCurrLocationContext(), getCurrBlock());
   }
 
   /// Dump graph to the specified filename.
@@ -764,9 +764,7 @@ public:
 
   /// Return the CFG element corresponding to the worklist element
   /// that is currently being processed by ExprEngine.
-  CFGElement getCurrentCFGElement() {
-    return (*getCurrentBlock())[currStmtIdx];
-  }
+  CFGElement getCurrentCFGElement() { return (*getCurrBlock())[currStmtIdx]; }
 
   /// Create a new state in which the call return value is binded to the
   /// call origin expression.
