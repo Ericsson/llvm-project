@@ -270,7 +270,7 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   CallEventManager &CEMgr = getStateManager().getCallEventManager();
   CallEventRef<> Call = CEMgr.getCaller(calleeCtx, state);
 
-  // Step 2: generate node with bound return value: CEBNode -> BindedRetNode.
+  // Step 2: generate node with bound return value: CEBNode -> BoundRetNode.
 
   // If this variable is set to 'true' the analyzer will evaluate the call
   // statement we are about to exit again, instead of continuing the execution
@@ -342,7 +342,7 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
         state, dyn_cast_or_null<CXXConstructExpr>(CE), callerCtx);
   }
 
-  // Step 3: BindedRetNode -> CleanedNodes
+  // Step 3: BoundRetNode -> CleanedNodes
   // If we can find a statement and a block in the inlined function, run remove
   // dead bindings before returning from the call. This is important to ensure
   // that we report the issues such as leaks in the stack contexts in which
@@ -357,18 +357,18 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     const CFGBlock *PrePurgeBlock =
         isa<ReturnStmt>(LastSt) ? Blk : &CEBNode->getCFG().getExit();
     bool isNew;
-    ExplodedNode *BindedRetNode = G.getNode(Loc, state, false, &isNew);
-    BindedRetNode->addPredecessor(CEBNode, G);
+    ExplodedNode *BoundRetNode = G.getNode(Loc, state, false, &isNew);
+    BoundRetNode->addPredecessor(CEBNode, G);
     if (!isNew)
       return;
 
-    NodeBuilderContext Ctx(getCoreEngine(), PrePurgeBlock, BindedRetNode);
+    NodeBuilderContext Ctx(getCoreEngine(), PrePurgeBlock, BoundRetNode);
     currBldrCtx = &Ctx;
     // Here, we call the Symbol Reaper with 0 statement and callee location
     // context, telling it to clean up everything in the callee's context
     // (and its children). We use the callee's function body as a diagnostic
     // statement, with which the program point will be associated.
-    removeDead(BindedRetNode, CleanedNodes, nullptr, calleeCtx,
+    removeDead(BoundRetNode, CleanedNodes, nullptr, calleeCtx,
                calleeCtx->getAnalysisDeclContext()->getBody(),
                ProgramPoint::PostStmtPurgeDeadSymbolsKind);
     currBldrCtx = nullptr;
