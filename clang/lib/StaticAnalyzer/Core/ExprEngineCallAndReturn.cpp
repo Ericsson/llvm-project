@@ -362,13 +362,14 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     if (!isNew)
       return;
 
-    NodeBuilderContext Ctx(getCoreEngine(), PrePurgeBlock, BoundRetNode);
-    currBldrCtx = &Ctx;
     // We call removeDead in the context of the callee.
-    removeDead(BoundRetNode, CleanedNodes, /*ReferenceStmt=*/nullptr, calleeCtx,
-               /*DiagnosticStmt=*/calleeCtx->getAnalysisDeclContext()->getBody(),
-               ProgramPoint::PostStmtPurgeDeadSymbolsKind);
-    currBldrCtx = nullptr;
+    setCurrLocationContextAndBlock(BoundRetNode->getLocationContext(),
+                                   PrePurgeBlock);
+    removeDead(
+        BoundRetNode, CleanedNodes, /*ReferenceStmt=*/nullptr, calleeCtx,
+        /*DiagnosticStmt=*/calleeCtx->getAnalysisDeclContext()->getBody(),
+        ProgramPoint::PostStmtPurgeDeadSymbolsKind);
+    resetCurrLocationContextAndBlock();
   } else {
     CleanedNodes.Add(CEBNode);
   }
@@ -388,8 +389,8 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     // Step 5: Perform the post-condition check of the CallExpr and enqueue the
     // result onto the work list.
     // CEENode -> Dst -> WorkList
-    NodeBuilderContext Ctx(Engine, calleeCtx->getCallSiteBlock(), CEENode);
-    SaveAndRestore<const NodeBuilderContext *> NBCSave(currBldrCtx, &Ctx);
+    setCurrLocationContextAndBlock(CEENode->getLocationContext(),
+                                   calleeCtx->getCallSiteBlock());
     SaveAndRestore CBISave(currStmtIdx, calleeCtx->getIndex());
 
     CallEventRef<> UpdatedCall = Call.cloneWithState(CEEState);
