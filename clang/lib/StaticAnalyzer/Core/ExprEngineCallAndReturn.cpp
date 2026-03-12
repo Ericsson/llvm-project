@@ -359,8 +359,7 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
       return;
 
     // We call removeDead in the context of the callee.
-    setCurrLocationContextAndBlock(BoundRetNode->getLocationContext(),
-                                   PrePurgeBlock);
+    setCurrLocationContextAndBlock(CalleeCtx, PrePurgeBlock);
     removeDead(
         BoundRetNode, CleanedNodes, /*ReferenceStmt=*/nullptr, CalleeCtx,
         /*DiagnosticStmt=*/CalleeCtx->getAnalysisDeclContext()->getBody(),
@@ -383,8 +382,7 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     // Step 5: Perform the post-condition check of the CallExpr and enqueue the
     // result onto the work list.
     // CEENode -> Dst -> WorkList
-    setCurrLocationContextAndBlock(CEENode->getLocationContext(),
-                                   CalleeCtx->getCallSiteBlock());
+    setCurrLocationContextAndBlock(CallerCtx, CalleeCtx->getCallSiteBlock());
     SaveAndRestore CBISave(currStmtIdx, CalleeCtx->getIndex());
 
     CallEventRef<> UpdatedCall = Call.cloneWithState(CEEState);
