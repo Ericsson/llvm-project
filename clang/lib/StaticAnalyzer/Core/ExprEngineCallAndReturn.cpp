@@ -353,10 +353,9 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
                                                /*Data2=*/nullptr, &RetValBind)};
     const CFGBlock *PrePurgeBlock =
         isa<ReturnStmt>(LastSt) ? Blk : &CEBNode->getCFG().getExit();
-    bool isNew;
-    ExplodedNode *BoundRetNode = G.getNode(Loc, State, false, &isNew);
-    BoundRetNode->addPredecessor(CEBNode, G);
-    if (!isNew)
+
+    ExplodedNode *BoundRetNode = Engine.makeNode(Loc, State, CEBNode);
+    if (!BoundRetNode)
       return;
 
     // We call removeDead in the context of the callee.
@@ -375,12 +374,10 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     // Step 4: Generate the CallExit and leave the callee's context.
     // CleanedNodes -> CEENode
     CallExitEnd Loc(CalleeCtx, CallerCtx);
-    bool isNew;
     ProgramStateRef CEEState = (N == CEBNode) ? State : N->getState();
 
-    ExplodedNode *CEENode = G.getNode(Loc, CEEState, false, &isNew);
-    CEENode->addPredecessor(N, G);
-    if (!isNew)
+    ExplodedNode *CEENode = Engine.makeNode(Loc, CEEState, N);
+    if (!CEENode)
       return;
 
     // Step 5: Perform the post-condition check of the CallExpr and enqueue the
