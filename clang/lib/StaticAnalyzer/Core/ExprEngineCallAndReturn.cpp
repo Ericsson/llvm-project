@@ -425,11 +425,11 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     }
 
     // Enqueue the next element in the block.
-    for (ExplodedNodeSet::iterator PSI = Dst.begin(), PSE = Dst.end();
-         PSI != PSE; ++PSI) {
+    for (ExplodedNode *DstNode : Dst) {
       unsigned Idx = CalleeCtx->getIndex() + (ShouldRepeatCall ? 0 : 1);
 
-      Engine.getWorkList()->enqueue(*PSI, CalleeCtx->getCallSiteBlock(), Idx);
+      Engine.getWorkList()->enqueue(DstNode, CalleeCtx->getCallSiteBlock(),
+                                    Idx);
     }
   }
 }
