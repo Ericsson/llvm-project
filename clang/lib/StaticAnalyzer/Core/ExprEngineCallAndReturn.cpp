@@ -262,6 +262,10 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   // Find the last statement in the function and the corresponding basic block.
   auto [LastSt, Blk] = getLastStmt(CEBNode);
 
+  const CFGBlock *PrePurgeBlock =
+      isa_and_nonnull<ReturnStmt>(LastSt) ? Blk : &CEBNode->getCFG().getExit();
+  setCurrLocationContextAndBlock(CalleeCtx, PrePurgeBlock);
+
   // Generate a CallEvent /before/ cleaning the State, so that we can get the
   // correct value for 'this' (if necessary).
   CallEventManager &CEMgr = getStateManager().getCallEventManager();
@@ -351,23 +355,23 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
                    ? ProgramPoint{PostStmt(LastSt, CalleeCtx, &RetValBind)}
                    : ProgramPoint{EpsilonPoint(CalleeCtx, /*Data1=*/nullptr,
                                                /*Data2=*/nullptr, &RetValBind)};
-    const CFGBlock *PrePurgeBlock =
-        isa<ReturnStmt>(LastSt) ? Blk : &CEBNode->getCFG().getExit();
 
     ExplodedNode *BoundRetNode = Engine.makeNode(Loc, State, CEBNode);
     if (!BoundRetNode)
       return;
 
     // We call removeDead in the context of the callee.
-    setCurrLocationContextAndBlock(CalleeCtx, PrePurgeBlock);
     removeDead(
         BoundRetNode, CleanedNodes, /*ReferenceStmt=*/nullptr, CalleeCtx,
         /*DiagnosticStmt=*/CalleeCtx->getAnalysisDeclContext()->getBody(),
         ProgramPoint::PostStmtPurgeDeadSymbolsKind);
-    resetCurrLocationContextAndBlock();
   } else {
     CleanedNodes.Add(CEBNode);
   }
+
+  resetCurrLocationContextAndBlock();
+  setCurrLocationContextAndBlock(CallerCtx, CalleeCtx->getCallSiteBlock());
+  SaveAndRestore CBISave(currStmtIdx, CalleeCtx->getIndex());
 
   for (ExplodedNode *N : CleanedNodes) {
     // Step 4: Generate the CallExit and leave the callee's context.
@@ -382,8 +386,6 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     // Step 5: Perform the post-condition check of the CallExpr and enqueue the
     // result onto the work list.
     // CEENode -> Dst -> WorkList
-    setCurrLocationContextAndBlock(CallerCtx, CalleeCtx->getCallSiteBlock());
-    SaveAndRestore CBISave(currStmtIdx, CalleeCtx->getIndex());
 
     CallEventRef<> UpdatedCall = Call.cloneWithState(CEEState);
 
