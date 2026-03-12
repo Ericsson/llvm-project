@@ -251,24 +251,23 @@ ProgramStateRef ExprEngine::removeStateTraitsUsedForArrayEvaluation(
 /// 5. PostStmt<CallExpr>
 void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   // Step 1 CEBNode was generated before the call.
-  const StackFrameContext *calleeCtx = CEBNode->getStackFrame();
+  const StackFrameContext *CalleeCtx = CEBNode->getStackFrame();
 
   // The parent context might not be a stack frame, so make sure we
   // look up the first enclosing stack frame.
-  const StackFrameContext *callerCtx =
-    calleeCtx->getParent()->getStackFrame();
+  const StackFrameContext *CallerCtx = CalleeCtx->getParent()->getStackFrame();
 
-  const Stmt *CE = calleeCtx->getCallSite();
-  ProgramStateRef state = CEBNode->getState();
+  const Stmt *CE = CalleeCtx->getCallSite();
+  ProgramStateRef State = CEBNode->getState();
   // Find the last statement in the function and the corresponding basic block.
   const Stmt *LastSt = nullptr;
   const CFGBlock *Blk = nullptr;
   std::tie(LastSt, Blk) = getLastStmt(CEBNode);
 
-  // Generate a CallEvent /before/ cleaning the state, so that we can get the
+  // Generate a CallEvent /before/ cleaning the State, so that we can get the
   // correct value for 'this' (if necessary).
   CallEventManager &CEMgr = getStateManager().getCallEventManager();
-  CallEventRef<> Call = CEMgr.getCaller(calleeCtx, state);
+  CallEventRef<> Call = CEMgr.getCaller(CalleeCtx, State);
 
   // Step 2: generate node with bound return value: CEBNode -> BoundRetNode.
 
@@ -281,11 +280,11 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
 
   if (const auto *DtorDecl =
           dyn_cast_or_null<CXXDestructorDecl>(Call->getDecl())) {
-    if (auto Idx = getPendingArrayDestruction(state, callerCtx)) {
+    if (auto Idx = getPendingArrayDestruction(State, CallerCtx)) {
       ShouldRepeatCall = *Idx > 0;
 
-      auto ThisVal = svalBuilder.getCXXThis(DtorDecl->getParent(), calleeCtx);
-      state = state->killBinding(ThisVal);
+      auto ThisVal = svalBuilder.getCXXThis(DtorDecl->getParent(), CalleeCtx);
+      State = State->killBinding(ThisVal);
     }
   }
 
@@ -293,12 +292,12 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   if (CE) {
     if (const ReturnStmt *RS = dyn_cast_or_null<ReturnStmt>(LastSt)) {
       const LocationContext *LCtx = CEBNode->getLocationContext();
-      SVal V = state->getSVal(RS, LCtx);
+      SVal V = State->getSVal(RS, LCtx);
 
       // Ensure that the return type matches the type of the returned Expr.
-      if (wasDifferentDeclUsedForInlining(Call, calleeCtx)) {
+      if (wasDifferentDeclUsedForInlining(Call, CalleeCtx)) {
         QualType ReturnedTy =
-          CallEvent::getDeclaredResultType(calleeCtx->getDecl());
+            CallEvent::getDeclaredResultType(CalleeCtx->getDecl());
         if (!ReturnedTy.isNull()) {
           if (const Expr *Ex = dyn_cast<Expr>(CE)) {
             V = adjustReturnValue(V, Ex->getType(), ReturnedTy,
@@ -307,18 +306,18 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
         }
       }
 
-      state = state->BindExpr(CE, callerCtx, V);
+      State = State->BindExpr(CE, CallerCtx, V);
     }
 
     // Bind the constructed object value to CXXConstructExpr.
     if (const CXXConstructExpr *CCE = dyn_cast<CXXConstructExpr>(CE)) {
       loc::MemRegionVal This =
-        svalBuilder.getCXXThis(CCE->getConstructor()->getParent(), calleeCtx);
-      SVal ThisV = state->getSVal(This);
-      ThisV = state->getSVal(ThisV.castAs<Loc>());
-      state = state->BindExpr(CCE, callerCtx, ThisV);
+          svalBuilder.getCXXThis(CCE->getConstructor()->getParent(), CalleeCtx);
+      SVal ThisV = State->getSVal(This);
+      ThisV = State->getSVal(ThisV.castAs<Loc>());
+      State = State->BindExpr(CCE, CallerCtx, ThisV);
 
-      ShouldRepeatCall = shouldRepeatCtorCall(state, CCE, callerCtx);
+      ShouldRepeatCall = shouldRepeatCtorCall(State, CCE, CallerCtx);
     }
 
     if (const auto *CNE = dyn_cast<CXXNewExpr>(CE)) {
@@ -327,19 +326,19 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
       // region for later use.
       // Additionally cast the return value of the inlined operator new
       // (which is of type 'void *') to the correct object type.
-      SVal AllocV = state->getSVal(CNE, callerCtx);
+      SVal AllocV = State->getSVal(CNE, CallerCtx);
       AllocV = svalBuilder.evalCast(
           AllocV, CNE->getType(),
           getContext().getPointerType(getContext().VoidTy));
 
-      state = addObjectUnderConstruction(state, CNE, calleeCtx->getParent(),
+      State = addObjectUnderConstruction(State, CNE, CalleeCtx->getParent(),
                                          AllocV);
     }
   }
 
   if (!ShouldRepeatCall) {
-    state = removeStateTraitsUsedForArrayEvaluation(
-        state, dyn_cast_or_null<CXXConstructExpr>(CE), callerCtx);
+    State = removeStateTraitsUsedForArrayEvaluation(
+        State, dyn_cast_or_null<CXXConstructExpr>(CE), CallerCtx);
   }
 
   // Step 3: BoundRetNode -> CleanedNodes
@@ -349,15 +348,15 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   // they occurred.
   ExplodedNodeSet CleanedNodes;
   if (LastSt && Blk && AMgr.options.AnalysisPurgeOpt != PurgeNone) {
-    static SimpleProgramPointTag retValBind("ExprEngine", "Bind Return Value");
+    static SimpleProgramPointTag RetValBind("ExprEngine", "Bind Return Value");
     auto Loc = isa<ReturnStmt>(LastSt)
-                   ? ProgramPoint{PostStmt(LastSt, calleeCtx, &retValBind)}
-                   : ProgramPoint{EpsilonPoint(calleeCtx, /*Data1=*/nullptr,
-                                               /*Data2=*/nullptr, &retValBind)};
+                   ? ProgramPoint{PostStmt(LastSt, CalleeCtx, &RetValBind)}
+                   : ProgramPoint{EpsilonPoint(CalleeCtx, /*Data1=*/nullptr,
+                                               /*Data2=*/nullptr, &RetValBind)};
     const CFGBlock *PrePurgeBlock =
         isa<ReturnStmt>(LastSt) ? Blk : &CEBNode->getCFG().getExit();
     bool isNew;
-    ExplodedNode *BoundRetNode = G.getNode(Loc, state, false, &isNew);
+    ExplodedNode *BoundRetNode = G.getNode(Loc, State, false, &isNew);
     BoundRetNode->addPredecessor(CEBNode, G);
     if (!isNew)
       return;
@@ -366,8 +365,8 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     setCurrLocationContextAndBlock(BoundRetNode->getLocationContext(),
                                    PrePurgeBlock);
     removeDead(
-        BoundRetNode, CleanedNodes, /*ReferenceStmt=*/nullptr, calleeCtx,
-        /*DiagnosticStmt=*/calleeCtx->getAnalysisDeclContext()->getBody(),
+        BoundRetNode, CleanedNodes, /*ReferenceStmt=*/nullptr, CalleeCtx,
+        /*DiagnosticStmt=*/CalleeCtx->getAnalysisDeclContext()->getBody(),
         ProgramPoint::PostStmtPurgeDeadSymbolsKind);
     resetCurrLocationContextAndBlock();
   } else {
@@ -377,9 +376,9 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   for (ExplodedNode *N : CleanedNodes) {
     // Step 4: Generate the CallExit and leave the callee's context.
     // CleanedNodes -> CEENode
-    CallExitEnd Loc(calleeCtx, callerCtx);
+    CallExitEnd Loc(CalleeCtx, CallerCtx);
     bool isNew;
-    ProgramStateRef CEEState = (N == CEBNode) ? state : N->getState();
+    ProgramStateRef CEEState = (N == CEBNode) ? State : N->getState();
 
     ExplodedNode *CEENode = G.getNode(Loc, CEEState, false, &isNew);
     CEENode->addPredecessor(N, G);
@@ -390,8 +389,8 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     // result onto the work list.
     // CEENode -> Dst -> WorkList
     setCurrLocationContextAndBlock(CEENode->getLocationContext(),
-                                   calleeCtx->getCallSiteBlock());
-    SaveAndRestore CBISave(currStmtIdx, calleeCtx->getIndex());
+                                   CalleeCtx->getCallSiteBlock());
+    SaveAndRestore CBISave(currStmtIdx, CalleeCtx->getIndex());
 
     CallEventRef<> UpdatedCall = Call.cloneWithState(CEEState);
 
@@ -428,9 +427,9 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     // Enqueue the next element in the block.
     for (ExplodedNodeSet::iterator PSI = Dst.begin(), PSE = Dst.end();
          PSI != PSE; ++PSI) {
-      unsigned Idx = calleeCtx->getIndex() + (ShouldRepeatCall ? 0 : 1);
+      unsigned Idx = CalleeCtx->getIndex() + (ShouldRepeatCall ? 0 : 1);
 
-      Engine.getWorkList()->enqueue(*PSI, calleeCtx->getCallSiteBlock(), Idx);
+      Engine.getWorkList()->enqueue(*PSI, CalleeCtx->getCallSiteBlock(), Idx);
     }
   }
 }
