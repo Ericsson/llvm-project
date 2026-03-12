@@ -260,9 +260,7 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   const Stmt *CE = CalleeCtx->getCallSite();
   ProgramStateRef State = CEBNode->getState();
   // Find the last statement in the function and the corresponding basic block.
-  const Stmt *LastSt = nullptr;
-  const CFGBlock *Blk = nullptr;
-  std::tie(LastSt, Blk) = getLastStmt(CEBNode);
+  auto [LastSt, Blk] = getLastStmt(CEBNode);
 
   // Generate a CallEvent /before/ cleaning the State, so that we can get the
   // correct value for 'this' (if necessary).
