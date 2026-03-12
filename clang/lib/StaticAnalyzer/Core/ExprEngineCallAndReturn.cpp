@@ -364,12 +364,9 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
 
     NodeBuilderContext Ctx(getCoreEngine(), PrePurgeBlock, BoundRetNode);
     currBldrCtx = &Ctx;
-    // Here, we call the Symbol Reaper with 0 statement and callee location
-    // context, telling it to clean up everything in the callee's context
-    // (and its children). We use the callee's function body as a diagnostic
-    // statement, with which the program point will be associated.
-    removeDead(BoundRetNode, CleanedNodes, nullptr, calleeCtx,
-               calleeCtx->getAnalysisDeclContext()->getBody(),
+    // We call removeDead in the context of the callee.
+    removeDead(BoundRetNode, CleanedNodes, /*ReferenceStmt=*/nullptr, calleeCtx,
+               /*DiagnosticStmt=*/calleeCtx->getAnalysisDeclContext()->getBody(),
                ProgramPoint::PostStmtPurgeDeadSymbolsKind);
     currBldrCtx = nullptr;
   } else {
