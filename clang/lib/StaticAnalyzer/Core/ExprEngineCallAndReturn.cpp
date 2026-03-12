@@ -247,8 +247,10 @@ ProgramStateRef ExprEngine::removeStateTraitsUsedForArrayEvaluation(
 /// 1. CallExitBegin (triggers the start of call exit sequence)
 /// 2. Bind the return value
 /// 3. Run Remove dead bindings to clean up the dead symbols from the callee.
-/// 4. CallExitEnd (switch to the caller context)
+/// 4. CallExitEnd
 /// 5. PostStmt<CallExpr>
+/// Steps 1-3. happen in the callee context; but there is a context switch and
+/// steps 4-5. happen in the caller context.
 void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   // Step 1 CEBNode was generated before the call.
   const StackFrameContext *CalleeCtx = CEBNode->getStackFrame();
@@ -264,6 +266,7 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
 
   const CFGBlock *PrePurgeBlock =
       isa_and_nonnull<ReturnStmt>(LastSt) ? Blk : &CEBNode->getCFG().getExit();
+  // The first half of this process happens in the callee context:
   setCurrLocationContextAndBlock(CalleeCtx, PrePurgeBlock);
 
   // Generate a CallEvent /before/ cleaning the State, so that we can get the
@@ -369,12 +372,15 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
     CleanedNodes.Add(CEBNode);
   }
 
+  // The second half of this process happens in the caller context. This is an
+  // exception to the general rule that the current LocationContext and Block
+  // stay the same within a single call to dispatchWorkItem.
   resetCurrLocationContextAndBlock();
   setCurrLocationContextAndBlock(CallerCtx, CalleeCtx->getCallSiteBlock());
   SaveAndRestore CBISave(currStmtIdx, CalleeCtx->getIndex());
 
   for (ExplodedNode *N : CleanedNodes) {
-    // Step 4: Generate the CallExit and leave the callee's context.
+    // Step 4: Generate the CallExitEnd node.
     // CleanedNodes -> CEENode
     CallExitEnd Loc(CalleeCtx, CallerCtx);
     ProgramStateRef CEEState = (N == CEBNode) ? State : N->getState();
