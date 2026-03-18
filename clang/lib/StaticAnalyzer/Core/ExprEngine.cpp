@@ -2976,10 +2976,9 @@ void ExprEngine::processStaticInitializer(const DeclStmt *DS,
 void ExprEngine::processIndirectGoto(ExplodedNodeSet &DstSet, const Expr *Tgt,
                                      const CFGBlock *Dispatch,
                                      ExplodedNode *Pred) {
-
-  IndirectGotoNodeBuilder Builder(DstSet, getBuilderContext(), Tgt, Dispatch);
+  NodeBuilder Builder(DstSet, getBuilderContext());
   ProgramStateRef State = Pred->getState();
-  SVal V = State->getSVal(Builder.getTarget(), Builder.getLocationContext());
+  SVal V = State->getSVal(Tgt, getCurrLocationContext());
 
   // We cannot dispatch anywhere if the label is undefined, NULL or some other
   // concrete number.
@@ -2996,7 +2995,7 @@ void ExprEngine::processIndirectGoto(ExplodedNodeSet &DstSet, const Expr *Tgt,
     L = LV->getLabel();
 
   // Dispatch to the label 'L' or to all labels if 'L' is null.
-  for (const CFGBlock *Succ : Builder) {
+  for (const CFGBlock *Succ : Dispatch->succs()) {
     if (!L || cast<LabelStmt>(Succ->getLabel())->getDecl() == L) {
       // FIXME: If 'V' was a symbolic value, then record that on this execution
       // path it is equal to the address of the label leading to 'Succ'.
