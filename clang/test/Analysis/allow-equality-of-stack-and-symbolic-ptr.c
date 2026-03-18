@@ -2,7 +2,6 @@
 // RUN:   -analyzer-checker=core \
 // RUN:   -analyzer-checker=unix.StdCLibraryFunctions \
 // RUN:   -analyzer-checker=debug.ExprInspection \
-// RUN:   -triple x86_64-unknown-linux-gnu \
 // RUN:   -verify
 
 #include "Inputs/std-c-library-functions-POSIX.h"
