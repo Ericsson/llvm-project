@@ -2997,7 +2997,8 @@ void ExprEngine::processIndirectGoto(IndirectGotoNodeBuilder &Builder,
     if (!L || cast<LabelStmt>(Succ->getLabel())->getDecl() == L) {
       // FIXME: If 'V' was a symbolic value, then record that on this execution
       // path it is equal to the address of the label leading to 'Succ'.
-      Builder.generateNode(Succ, State, Pred);
+      BlockEdge BE(getCurrBlock(), Succ, Pred->getLocationContext());
+      Builder.generateNode(BE, State, Pred);
     }
   }
 }

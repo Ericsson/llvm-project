@@ -348,11 +348,6 @@ public:
   iterator begin() { return DispatchBlock.succ_begin(); }
   iterator end() { return DispatchBlock.succ_end(); }
 
-  using NodeBuilder::generateNode;
-
-  ExplodedNode *generateNode(const CFGBlock *Block, ProgramStateRef State,
-                             ExplodedNode *Pred);
-
   const Expr *getTarget() const { return Target; }
 
   const LocationContext *getLocationContext() const {

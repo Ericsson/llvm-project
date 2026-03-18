@@ -711,13 +711,6 @@ ExplodedNode *BranchNodeBuilder::generateNode(ProgramStateRef State,
   return Succ;
 }
 
-ExplodedNode *IndirectGotoNodeBuilder::generateNode(const CFGBlock *Block,
-                                                    ProgramStateRef St,
-                                                    ExplodedNode *Pred) {
-  BlockEdge BE(C.getBlock(), Block, Pred->getLocationContext());
-  return generateNode(BE, St, Pred);
-}
-
 ExplodedNode *SwitchNodeBuilder::generateCaseStmtNode(const CFGBlock *Block,
                                                       ProgramStateRef St,
                                                       ExplodedNode *Pred) {
