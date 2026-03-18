@@ -36,7 +36,7 @@ void test_local_not_leaked(void) {
   // call to 'opaque_function' cannot return it.
   int x = 0;
   if (&x == opaque_function(NULL)) {
-    // This branch is practically unreachable; however, we cannot fault the
+    // This branch is practically unreachable; however, we cannot blame the
     // analyzer for not deducing this.
     clang_analyzer_warnIfReached(); // expected-warning {{REACHABLE}}
   } else {
