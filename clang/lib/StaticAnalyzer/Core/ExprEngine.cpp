@@ -2988,7 +2988,7 @@ void ExprEngine::processIndirectGoto(ExplodedNodeSet &Dst, const Expr *Tgt,
   // If 'V' is the address of a concrete goto label (on this execution path),
   // then only transition along the edge to that label.
   // FIXME: Implement dispatch for symbolic pointers, utilizing information
-  // that they are equal or not equal to pointers to certain goto label.
+  // that they are equal or not equal to pointers to a certain goto label.
   const LabelDecl *L = nullptr;
   if (auto LV = V.getAs<loc::GotoLabel>())
     L = LV->getLabel();
