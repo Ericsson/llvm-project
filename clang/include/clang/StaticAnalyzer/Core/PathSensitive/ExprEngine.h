@@ -83,7 +83,6 @@ class CheckerManager;
 class ConstraintManager;
 class ExplodedNodeSet;
 class ExplodedNode;
-class IndirectGotoNodeBuilder;
 class MemRegion;
 class NodeBuilderContext;
 class ProgramState;
