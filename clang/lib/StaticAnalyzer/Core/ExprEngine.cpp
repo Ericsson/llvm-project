@@ -2984,24 +2984,22 @@ void ExprEngine::processIndirectGoto(IndirectGotoNodeBuilder &Builder,
   if (isa<UndefinedVal, loc::ConcreteInt>(V))
     return;
 
-  // Case 1: We know the computed label.
-  if (std::optional<loc::GotoLabel> LV = V.getAs<loc::GotoLabel>()) {
-    const LabelDecl *L = LV->getLabel();
+  // If 'V' is the address of a concrete goto label (on this execution path),
+  // then only transition along the edge to that label.
+  // FIXME: Implement dispatch for symbolic pointers, utilizing information
+  // that they are equal or not equal to pointers to certain goto label.
+  const LabelDecl *L = nullptr;
+  if (auto LV = V.getAs<loc::GotoLabel>())
+    L = LV->getLabel();
 
-    for (const CFGBlock *Succ : Builder) {
-      if (cast<LabelStmt>(Succ->getLabel())->getDecl() == L) {
-        Builder.generateNode(Succ, State, Pred);
-        return;
-      }
+  // Dispatch to the label 'L' or to all labels if 'L' is null.
+  for (const CFGBlock *Succ : Builder) {
+    if (!L || cast<LabelStmt>(Succ->getLabel())->getDecl() == L) {
+      // FIXME: If 'V' was a symbolic value, then record that on this execution
+      // path it is equal to the address of the label leading to 'Succ'.
+      Builder.generateNode(Succ, State, Pred);
     }
-
-    llvm_unreachable("No block with label.");
   }
-
-  // Case 2: We have no clue about the label.  Dispatch to all targets.
-  // FIXME: Implement dispatch for symbolic pointers.
-  for (const CFGBlock *Succ : Builder)
-    Builder.generateNode(Succ, State, Pred);
 }
 
 void ExprEngine::processBeginOfFunction(ExplodedNode *Pred,
