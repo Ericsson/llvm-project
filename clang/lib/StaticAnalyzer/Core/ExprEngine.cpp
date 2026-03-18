@@ -2978,6 +2978,12 @@ void ExprEngine::processIndirectGoto(IndirectGotoNodeBuilder &Builder,
   ProgramStateRef State = Pred->getState();
   SVal V = State->getSVal(Builder.getTarget(), Builder.getLocationContext());
 
+  // We cannot dispatch anywhere if the label is undefined, NULL or some other
+  // concrete number.
+  // FIXME: Emit a warning in this situation.
+  if (isa<UndefinedVal, loc::ConcreteInt>(V))
+    return;
+
   // Case 1: We know the computed label.
   if (std::optional<loc::GotoLabel> LV = V.getAs<loc::GotoLabel>()) {
     const LabelDecl *L = LV->getLabel();
@@ -2992,13 +2998,7 @@ void ExprEngine::processIndirectGoto(IndirectGotoNodeBuilder &Builder,
     llvm_unreachable("No block with label.");
   }
 
-  // Case 2: The label is NULL (or some other constant), or Undefined.
-  if (isa<UndefinedVal, loc::ConcreteInt>(V)) {
-    // FIXME: Emit warnings when the jump target is undefined or numerical.
-    return;
-  }
-
-  // Case 3: We have no clue about the label.  Dispatch to all targets.
+  // Case 2: We have no clue about the label.  Dispatch to all targets.
   // FIXME: Implement dispatch for symbolic pointers.
   for (const CFGBlock *Succ : Builder)
     Builder.generateNode(Succ, State, Pred);
