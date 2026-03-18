@@ -2973,7 +2973,7 @@ void ExprEngine::processStaticInitializer(const DeclStmt *DS,
 
 /// processIndirectGoto - Called by CoreEngine.  Used to generate successor
 ///  nodes by processing the 'effects' of a computed goto jump.
-void ExprEngine::processIndirectGoto(ExplodedNodeSet &DstSet, const Expr *Tgt,
+void ExprEngine::processIndirectGoto(ExplodedNodeSet &Dst, const Expr *Tgt,
                                      const CFGBlock *Dispatch,
                                      ExplodedNode *Pred) {
   ProgramStateRef State = Pred->getState();
@@ -2999,7 +2999,7 @@ void ExprEngine::processIndirectGoto(ExplodedNodeSet &DstSet, const Expr *Tgt,
       // FIXME: If 'V' was a symbolic value, then record that on this execution
       // path it is equal to the address of the label leading to 'Succ'.
       BlockEdge BE(getCurrBlock(), Succ, Pred->getLocationContext());
-      DstSet.Add(Engine.makeNode(BE, State, Pred));
+      Dst.Add(Engine.makeNode(BE, State, Pred));
     }
   }
 }

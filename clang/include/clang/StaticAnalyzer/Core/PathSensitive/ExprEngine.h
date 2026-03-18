@@ -421,7 +421,7 @@ public:
 
   /// processIndirectGoto - Called by CoreEngine.  Used to generate successor
   ///  nodes by processing the 'effects' of a computed goto jump.
-  void processIndirectGoto(ExplodedNodeSet &DstSet, const Expr *Tgt,
+  void processIndirectGoto(ExplodedNodeSet &Dst, const Expr *Tgt,
                            const CFGBlock *Dispatch, ExplodedNode *Pred);
 
   /// ProcessSwitch - Called by CoreEngine.  Used to generate successor
