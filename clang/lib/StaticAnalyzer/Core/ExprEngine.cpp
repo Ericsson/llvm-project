@@ -2976,7 +2976,6 @@ void ExprEngine::processStaticInitializer(const DeclStmt *DS,
 void ExprEngine::processIndirectGoto(ExplodedNodeSet &DstSet, const Expr *Tgt,
                                      const CFGBlock *Dispatch,
                                      ExplodedNode *Pred) {
-  NodeBuilder Builder(DstSet, getBuilderContext());
   ProgramStateRef State = Pred->getState();
   SVal V = State->getSVal(Tgt, getCurrLocationContext());
 
@@ -3000,7 +2999,7 @@ void ExprEngine::processIndirectGoto(ExplodedNodeSet &DstSet, const Expr *Tgt,
       // FIXME: If 'V' was a symbolic value, then record that on this execution
       // path it is equal to the address of the label leading to 'Succ'.
       BlockEdge BE(getCurrBlock(), Succ, Pred->getLocationContext());
-      Builder.generateNode(BE, State, Pred);
+      DstSet.Add(Engine.makeNode(BE, State, Pred));
     }
   }
 }
