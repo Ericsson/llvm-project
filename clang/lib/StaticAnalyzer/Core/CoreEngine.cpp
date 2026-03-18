@@ -436,12 +436,9 @@ void CoreEngine::HandleBlockExit(const CFGBlock * B, ExplodedNode *Pred) {
         // Only 1 successor: the indirect goto dispatch block.
         assert(B->succ_size() == 1);
         ExplodedNodeSet Dst;
-        IndirectGotoNodeBuilder Builder(
-            Dst, ExprEng.getBuilderContext(),
-            cast<IndirectGotoStmt>(Term)->getTarget(), *(B->succ_begin()));
-
-        ExprEng.processIndirectGoto(Builder, Pred);
-        // Enqueue the new frontier onto the worklist.
+        ExprEng.processIndirectGoto(Dst,
+                                    cast<IndirectGotoStmt>(Term)->getTarget(),
+                                    *(B->succ_begin()), Pred);
         enqueue(Dst);
         return;
       }

@@ -2973,8 +2973,11 @@ void ExprEngine::processStaticInitializer(const DeclStmt *DS,
 
 /// processIndirectGoto - Called by CoreEngine.  Used to generate successor
 ///  nodes by processing the 'effects' of a computed goto jump.
-void ExprEngine::processIndirectGoto(IndirectGotoNodeBuilder &Builder,
+void ExprEngine::processIndirectGoto(ExplodedNodeSet &DstSet, const Expr *Tgt,
+                                     const CFGBlock *Dispatch,
                                      ExplodedNode *Pred) {
+
+  IndirectGotoNodeBuilder Builder(DstSet, getBuilderContext(), Tgt, Dispatch);
   ProgramStateRef State = Pred->getState();
   SVal V = State->getSVal(Builder.getTarget(), Builder.getLocationContext());
 
