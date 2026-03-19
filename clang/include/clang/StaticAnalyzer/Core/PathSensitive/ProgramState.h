@@ -280,7 +280,7 @@ public:
 
   /// Create a new state by binding the value 'V' to the statement 'S' in the
   /// state's environment.
-  [[nodiscard]] ProgramStateRef BindExpr(const Stmt *S,
+  [[nodiscard]] ProgramStateRef BindExpr(const Expr *S,
                                          const LocationContext *LCtx, SVal V,
                                          bool Invalidate = true) const;
 

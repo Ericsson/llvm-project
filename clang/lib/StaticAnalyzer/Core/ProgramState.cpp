@@ -298,9 +298,9 @@ SVal ProgramState::getSVal(Loc location, QualType T) const {
   return V;
 }
 
-ProgramStateRef ProgramState::BindExpr(const Stmt *S,
-                                           const LocationContext *LCtx,
-                                           SVal V, bool Invalidate) const{
+ProgramStateRef ProgramState::BindExpr(const Expr *S,
+                                       const LocationContext *LCtx, SVal V,
+                                       bool Invalidate) const {
   Environment NewEnv =
     getStateManager().EnvMgr.bindExpr(Env, EnvironmentEntry(S, LCtx), V,
                                       Invalidate);
