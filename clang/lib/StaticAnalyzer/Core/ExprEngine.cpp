@@ -3091,13 +3091,13 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
 
   for (ExplodedNode *Node : CheckersOutSet) {
     ProgramStateRef State = Node->getState();
+    const LocationContext *LCtx = Node->getLocationContext();
 
-    SVal CondV = State->getSVal(Condition, Node->getLocationContext());
+    SVal CondV = State->getSVal(Condition, LCtx);
     if (CondV.isUndef()) {
       // This can only happen if core.uninitialized.Branch is disabled.
       continue;
     }
-
     std::optional<NonLoc> CondNL = CondV.getAs<NonLoc>();
 
     // The reversed iteration order was arbitrarily introduced in 2008 by
@@ -3143,7 +3143,7 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
       }
 
       if (StateMatching) {
-        BlockEdge BE(getCurrBlock(), Block, Node->getLocationContext());
+        BlockEdge BE(getCurrBlock(), Block, LCtx);
         Dst.insert(Engine.makeNode(BE, StateMatching, Node));
       }
 
@@ -3177,7 +3177,7 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
     if (!DefaultBlock)
       return;
 
-    BlockEdge BE(Src, DefaultBlock, Node->getLocationContext());
+    BlockEdge BE(Src, DefaultBlock, LCtx);
     Dst.insert(Engine.makeNode(BE, State, Node));
   }
 }
