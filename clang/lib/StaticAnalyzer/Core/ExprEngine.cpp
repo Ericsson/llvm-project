@@ -3101,7 +3101,19 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
 
     std::optional<NonLoc> CondNL = CondV.getAs<NonLoc>();
 
-    for (const CFGBlock *Block : Builder) {
+    // The reversed iteration order was arbitrarily introduced in 2008 by
+    // commit 80ebc1d1c95704b0ff0386b3a3cbc8b3ff960654 (which added support for
+    // control flow in switch statements). I don't see any advantage of this
+    // iteration order, but changing it would change the order of insertion
+    // into the work list, which would perturb the analyzer results.
+    // FIXME: With forward iterators it would be possible to replace this
+    // convoluted code with a simple range-based for loop over
+    // CFGBlock::succs().
+    using iterator = CFGBlock::const_succ_reverse_iterator;
+    iterator LastCase = getCurrBlock()->succ_rbegin() + 1;
+    iterator BeforeFirstCase = getCurrBlock()->succ_rend();
+    for (iterator I = LastCase; I < BeforeFirstCase; I++) {
+      const CFGBlock *Block = *I;
       // Successor may be pruned out during CFG construction.
       if (!Block)
         continue;
