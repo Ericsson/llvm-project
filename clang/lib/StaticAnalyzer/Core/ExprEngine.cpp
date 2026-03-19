@@ -1885,7 +1885,7 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
       // GNU __null is a pointer-width integer, not an actual pointer.
       ProgramStateRef state = Pred->getState();
       state = state->BindExpr(
-          S, Pred->getLocationContext(),
+          cast<Expr>(S), Pred->getLocationContext(),
           svalBuilder.makeIntValWithWidth(getContext().VoidPtrTy, 0));
       Bldr.generateNode(S, Pred, state);
       break;
@@ -2017,7 +2017,7 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
       const LocationContext *LCtx = Pred->getLocationContext();
       for (const auto I : PreVisit) {
         ProgramStateRef State = I->getState();
-        State = State->BindExpr(S, LCtx, *ConstantVal);
+        State = State->BindExpr(cast<Expr>(S), LCtx, *ConstantVal);
         if (IsTemporary)
           State = createTemporaryRegionIfNeeded(State, LCtx,
                                                 cast<Expr>(S),
@@ -2443,13 +2443,15 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
       const auto *PE = cast<PseudoObjectExpr>(S);
       if (const Expr *Result = PE->getResultExpr()) {
         SVal V = state->getSVal(Result, Pred->getLocationContext());
-        Bldr.generateNode(S, Pred,
-                          state->BindExpr(S, Pred->getLocationContext(), V));
+        Bldr.generateNode(
+            S, Pred,
+            state->BindExpr(cast<Expr>(S), Pred->getLocationContext(), V));
       }
       else
         Bldr.generateNode(S, Pred,
-                          state->BindExpr(S, Pred->getLocationContext(),
-                                                   UnknownVal()));
+                          state->BindExpr(cast<Expr>(S),
+                                          Pred->getLocationContext(),
+                                          UnknownVal()));
 
       Bldr.addNodes(Dst);
       break;
@@ -2464,8 +2466,9 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
       const auto *OIE = cast<ObjCIndirectCopyRestoreExpr>(S);
       const Expr *E = OIE->getSubExpr();
       SVal V = state->getSVal(E, Pred->getLocationContext());
-      Bldr.generateNode(S, Pred,
-              state->BindExpr(S, Pred->getLocationContext(), V));
+      Bldr.generateNode(
+          S, Pred,
+          state->BindExpr(cast<Expr>(S), Pred->getLocationContext(), V));
       Bldr.addNodes(Dst);
       break;
     }

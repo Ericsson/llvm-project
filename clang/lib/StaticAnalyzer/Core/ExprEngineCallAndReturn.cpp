@@ -311,7 +311,8 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
         }
       }
 
-      State = State->BindExpr(CE, CallerCtx, V);
+      if (const auto *CEExpr = dyn_cast<Expr>(CE))
+        State = State->BindExpr(CEExpr, CallerCtx, V);
     }
 
     // Bind the constructed object value to CXXConstructExpr.
