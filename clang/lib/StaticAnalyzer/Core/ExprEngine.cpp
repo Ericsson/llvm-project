@@ -3084,7 +3084,6 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
                                ExplodedNodeSet &Dst) {
   const Expr *Condition = Switch->getCond();
 
-  NodeBuilder Builder(Dst, *currBldrCtx);
   ExplodedNodeSet CheckersOutSet;
 
   getCheckerManager().runCheckersForBranchCondition(
@@ -3145,7 +3144,7 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
 
       if (StateMatching) {
         BlockEdge BE(getCurrBlock(), Block, Node->getLocationContext());
-        Builder.generateNode(BE, StateMatching, Node);
+        Dst.insert(Engine.makeNode(BE, StateMatching, Node));
       }
 
       // If _not_ entering the current case is infeasible, then we are done
@@ -3179,7 +3178,7 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
       return;
 
     BlockEdge BE(Src, DefaultBlock, Node->getLocationContext());
-    Builder.generateNode(BE, State, Node);
+    Dst.insert(Engine.makeNode(BE, State, Node));
   }
 }
 
