@@ -3084,7 +3084,7 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
                                ExplodedNodeSet &Dst) {
   const Expr *Condition = Switch->getCond();
 
-  SwitchNodeBuilder Builder(Dst, *currBldrCtx);
+  NodeBuilder Builder(Dst, *currBldrCtx);
   ExplodedNodeSet CheckersOutSet;
 
   getCheckerManager().runCheckersForBranchCondition(

@@ -1,6 +1,6 @@
 // RUN: %clang_analyze_cc1 -verify %s -analyzer-checker=core
 
-// This file tests ExprEngine::processSwitch and the class SwitchNodeBuilder.
+// This file tests ExprEngine::processSwitch.
 
 int switch_simple(int x) {
   // Validate that switch behaves as expected in a very simple situation.
