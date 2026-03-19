@@ -341,12 +341,6 @@ public:
 
   iterator begin() { return C.getBlock()->succ_rbegin() + 1; }
   iterator end() { return C.getBlock()->succ_rend(); }
-
-  ExplodedNode *generateCaseStmtNode(const CFGBlock *Block,
-                                     ProgramStateRef State, ExplodedNode *Pred);
-
-  ExplodedNode *generateDefaultCaseNode(ProgramStateRef State,
-                                        ExplodedNode *Pred);
 };
 
 } // namespace ento

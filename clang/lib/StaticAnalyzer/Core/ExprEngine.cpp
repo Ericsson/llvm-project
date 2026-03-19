@@ -3131,8 +3131,10 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
         StateMatching = State;
       }
 
-      if (StateMatching)
-        Builder.generateCaseStmtNode(Block, StateMatching, Node);
+      if (StateMatching) {
+        BlockEdge BE(getCurrBlock(), Block, Node->getLocationContext());
+        Builder.generateNode(BE, StateMatching, Node);
+      }
 
       // If _not_ entering the current case is infeasible, then we are done
       // with processing the paths through the current Node.
@@ -3154,7 +3156,18 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
         continue;
     }
 
-    Builder.generateDefaultCaseNode(State, Node);
+    // Get the block for the default case.
+    const CFGBlock *Src = getCurrBlock();
+    assert(Src->succ_rbegin() != Src->succ_rend());
+    CFGBlock *DefaultBlock = *Src->succ_rbegin();
+
+    // Basic correctness check for default blocks that are unreachable and not
+    // caught by earlier stages.
+    if (!DefaultBlock)
+      return;
+
+    BlockEdge BE(Src, DefaultBlock, Node->getLocationContext());
+    Builder.generateNode(BE, State, Node);
   }
 }
 
