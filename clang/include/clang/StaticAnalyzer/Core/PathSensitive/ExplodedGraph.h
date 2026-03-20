@@ -446,8 +446,8 @@ class ExplodedNodeSet {
 
 public:
   ExplodedNodeSet(ExplodedNode *N) {
-    assert(N && !N->isSink());
-    Impl.insert(N);
+    if (N && !N->isSink())
+      Impl.insert(N);
   }
 
   ExplodedNodeSet() = default;
