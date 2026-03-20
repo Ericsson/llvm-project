@@ -3082,6 +3082,7 @@ void ExprEngine::processEndOfFunction(ExplodedNode *Pred,
 ///  nodes by processing the 'effects' of a switch statement.
 void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
                                ExplodedNodeSet &Dst) {
+  const ASTContext &ACtx = getContext();
   const Expr *Condition = Switch->getCond();
 
   ExplodedNodeSet CheckersOutSet;
@@ -3120,14 +3121,14 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
       const CaseStmt *Case = cast<CaseStmt>(Block->getLabel());
 
       // Evaluate the LHS of the case value.
-      llvm::APSInt V1 = Case->getLHS()->EvaluateKnownConstInt(getContext());
+      llvm::APSInt V1 = Case->getLHS()->EvaluateKnownConstInt(ACtx);
       assert(V1.getBitWidth() ==
              getContext().getIntWidth(Condition->getType()));
 
       // Get the RHS of the case, if it exists.
       llvm::APSInt V2;
       if (const Expr *E = Case->getRHS())
-        V2 = E->EvaluateKnownConstInt(getContext());
+        V2 = E->EvaluateKnownConstInt(ACtx);
       else
         V2 = V1;
 
