@@ -3083,6 +3083,7 @@ void ExprEngine::processEndOfFunction(ExplodedNode *Pred,
 void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
                                ExplodedNodeSet &Dst) {
   const ASTContext &ACtx = getContext();
+  const LocationContext *LCtx = Pred->getLocationContext();
   const Expr *Condition = Switch->getCond();
 
   ExplodedNodeSet CheckersOutSet;
@@ -3092,7 +3093,6 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
 
   for (ExplodedNode *Node : CheckersOutSet) {
     ProgramStateRef State = Node->getState();
-    const LocationContext *LCtx = Node->getLocationContext();
 
     SVal CondV = State->getSVal(Condition, LCtx);
     if (CondV.isUndef()) {
