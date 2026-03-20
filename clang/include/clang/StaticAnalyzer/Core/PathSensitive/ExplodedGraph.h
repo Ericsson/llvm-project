@@ -446,8 +446,7 @@ class ExplodedNodeSet {
 
 public:
   ExplodedNodeSet(ExplodedNode *N) {
-    if (N && !N->isSink())
-      Impl.insert(N);
+    Add(N);
   }
 
   ExplodedNodeSet() = default;
@@ -467,7 +466,8 @@ public:
   void clear() { Impl.clear(); }
 
   void insert(const ExplodedNodeSet &S) {
-    assert(&S != this);
+    if (&S == this)
+      return;
     if (empty())
       Impl = S.Impl;
     else
