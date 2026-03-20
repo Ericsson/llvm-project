@@ -445,16 +445,9 @@ class ExplodedNodeSet {
   ImplTy Impl;
 
 public:
-  ExplodedNodeSet(ExplodedNode *N) {
-    Add(N);
-  }
+  ExplodedNodeSet(ExplodedNode *N) { insert(N); }
 
   ExplodedNodeSet() = default;
-
-  void Add(ExplodedNode *N) {
-    if (N && !N->isSink())
-      Impl.insert(N);
-  }
 
   using iterator = ImplTy::iterator;
   using const_iterator = ImplTy::const_iterator;
@@ -464,6 +457,11 @@ public:
   bool erase(ExplodedNode *N) { return Impl.remove(N); }
 
   void clear() { Impl.clear(); }
+
+  void insert(ExplodedNode *N) {
+    if (N && !N->isSink())
+      Impl.insert(N);
+  }
 
   void insert(const ExplodedNodeSet &S) {
     if (&S == this)
