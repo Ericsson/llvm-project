@@ -3086,6 +3086,17 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
   const LocationContext *LCtx = Pred->getLocationContext();
   const Expr *Condition = Switch->getCond();
 
+  // The block that is terminated by the switch statement.
+  const CFGBlock *SwitchBlock = getCurrBlock();
+  // The reversed iteration order is present since the beginning, when in 2008
+  // commit 80ebc1d1c95704b0ff0386b3a3cbc8b3ff960654 added support for handling
+  // switch statements. I don't see any advantage over regular forward
+  // iteration -- but switching the order would perturb the insertion order of
+  // the work list and therefore the analysis results.
+  llvm::iterator_range<CFGBlock::const_succ_reverse_iterator> CaseBlocks(
+      SwitchBlock->succ_rbegin() + 1, SwitchBlock->succ_rend());
+  const CFGBlock *DefaultBlock = *SwitchBlock->succ_rbegin();
+
   ExplodedNodeSet CheckersOutSet;
 
   getCheckerManager().runCheckersForBranchCondition(
@@ -3101,24 +3112,12 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
     }
     std::optional<NonLoc> CondNL = CondV.getAs<NonLoc>();
 
-    // The reversed iteration order was arbitrarily introduced in 2008 by
-    // commit 80ebc1d1c95704b0ff0386b3a3cbc8b3ff960654 (which added support for
-    // control flow in switch statements). I don't see any advantage of this
-    // iteration order, but changing it would change the order of insertion
-    // into the work list, which would perturb the analyzer results.
-    // FIXME: With forward iterators it would be possible to replace this
-    // convoluted code with a simple range-based for loop over
-    // CFGBlock::succs().
-    using iterator = CFGBlock::const_succ_reverse_iterator;
-    iterator LastCase = getCurrBlock()->succ_rbegin() + 1;
-    iterator BeforeFirstCase = getCurrBlock()->succ_rend();
-    for (iterator I = LastCase; I < BeforeFirstCase; I++) {
-      const CFGBlock *Block = *I;
+    for (const CFGBlock *CaseBlock : CaseBlocks) {
       // Successor may be pruned out during CFG construction.
-      if (!Block)
+      if (!CaseBlock)
         continue;
 
-      const CaseStmt *Case = cast<CaseStmt>(Block->getLabel());
+      const CaseStmt *Case = cast<CaseStmt>(CaseBlock->getLabel());
 
       // Evaluate the LHS of the case value.
       llvm::APSInt V1 = Case->getLHS()->EvaluateKnownConstInt(ACtx);
@@ -3144,7 +3143,7 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
       }
 
       if (StateMatching) {
-        BlockEdge BE(getCurrBlock(), Block, LCtx);
+        BlockEdge BE(SwitchBlock, CaseBlock, LCtx);
         Dst.insert(Engine.makeNode(BE, StateMatching, Node));
       }
 
@@ -3168,17 +3167,12 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
         continue;
     }
 
-    // Get the block for the default case.
-    const CFGBlock *Src = getCurrBlock();
-    assert(Src->succ_rbegin() != Src->succ_rend());
-    CFGBlock *DefaultBlock = *Src->succ_rbegin();
-
     // Basic correctness check for default blocks that are unreachable and not
     // caught by earlier stages.
     if (!DefaultBlock)
       return;
 
-    BlockEdge BE(Src, DefaultBlock, LCtx);
+    BlockEdge BE(SwitchBlock, DefaultBlock, LCtx);
     Dst.insert(Engine.makeNode(BE, State, Node));
   }
 }
