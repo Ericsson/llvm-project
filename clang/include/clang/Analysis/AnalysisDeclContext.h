@@ -399,13 +399,13 @@ public:
   /// \param ParentLC   The parent context of this newly created context.
   /// \param E          The call expression.
   /// \param Block      The basic block.
-  /// \param BlockCount The current count of entering into \p Blk.
-  /// \param Index      The index of \p Blk.
-  /// \returns The context for \p D with parent context \p ParentLC.
+  /// \param BlockCount The current count of entering into \p Block.
+  /// \param StmtIdx    The index of the call expression within \p Block.
+  /// \returns The stack frame context corresponding to the call.
   const StackFrameContext *getStackFrame(AnalysisDeclContext *ADC,
                                          const LocationContext *ParentLC,
                                          const Expr *E, const CFGBlock *Block,
-                                         unsigned BlockCount, unsigned Index);
+                                         unsigned BlockCount, unsigned StmtIdx);
 
   /// Obtain a context of the block invocation using its parent context.
   ///
