@@ -585,7 +585,7 @@ void ExprEngine::inlineCall(WorkList *WList, const CallEvent &Call,
 }
 
 static ProgramStateRef getInlineFailedState(ProgramStateRef State,
-                                            const Stmt *CallE) {
+                                            const Expr *CallE) {
   const void *ReplayState = State->get<ReplayWithoutInlining>();
   if (!ReplayState)
     return nullptr;
@@ -1223,11 +1223,11 @@ void ExprEngine::defaultEvalCall(NodeBuilder &Bldr, ExplodedNode *Pred,
     return;
   }
 
-  // Try to inline the call.
-  // The origin expression here is just used as a kind of checksum;
-  // this should still be safe even for CallEvents that don't come from exprs.
   const Expr *E = Call.getOriginExpr();
 
+  // Try to inline the call. Note that `getInlineFailedStates` only uses its
+  // second argument in an assertion, so this should still be safe even for
+  // calls that don't come from exprs.
   ProgramStateRef InlinedFailedState = getInlineFailedState(State, E);
   if (InlinedFailedState) {
     // If we already tried once and failed, make sure we don't retry later.
