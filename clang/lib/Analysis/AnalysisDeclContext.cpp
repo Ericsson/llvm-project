@@ -515,9 +515,9 @@ void LocationContext::dumpStack(raw_ostream &Out) const {
         Out << "Calling " << AnalysisDeclContext::getFunctionName(D);
       else
         Out << "Calling anonymous code";
-      if (const Stmt *S = cast<StackFrameContext>(LCtx)->getCallSite()) {
+      if (const Expr *E = cast<StackFrameContext>(LCtx)->getCallSite()) {
         Out << " at line ";
-        printLocation(Out, SM, S->getBeginLoc());
+        printLocation(Out, SM, E->getBeginLoc());
       }
       break;
     case Block:
@@ -557,8 +557,8 @@ void LocationContext::printJson(raw_ostream &Out, const char *NL,
         Out << "anonymous code";
 
       Out << "\", \"location\": ";
-      if (const Stmt *S = cast<StackFrameContext>(LCtx)->getCallSite()) {
-        printSourceLocationAsJson(Out, S->getBeginLoc(), SM);
+      if (const Expr *E = cast<StackFrameContext>(LCtx)->getCallSite()) {
+        printSourceLocationAsJson(Out, E->getBeginLoc(), SM);
       } else {
         Out << "null";
       }

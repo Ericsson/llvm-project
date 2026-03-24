@@ -322,7 +322,7 @@ class StackFrameContext : public LocationContext {
 public:
   ~StackFrameContext() override = default;
 
-  const Stmt *getCallSite() const { return CallSite; }
+  const Expr *getCallSite() const { return CallSite; }
 
   const CFGBlock *getCallSiteBlock() const { return Block; }
 

@@ -259,7 +259,7 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
   // look up the first enclosing stack frame.
   const StackFrameContext *CallerCtx = CalleeCtx->getParent()->getStackFrame();
 
-  const Stmt *CE = CalleeCtx->getCallSite();
+  const Expr *CE = CalleeCtx->getCallSite();
   ProgramStateRef State = CEBNode->getState();
   // Find the last statement in the function and the corresponding basic block.
   auto [LastSt, Blk] = getLastStmt(CEBNode);
@@ -304,15 +304,12 @@ void ExprEngine::processCallExit(ExplodedNode *CEBNode) {
         QualType ReturnedTy =
             CallEvent::getDeclaredResultType(CalleeCtx->getDecl());
         if (!ReturnedTy.isNull()) {
-          if (const Expr *Ex = dyn_cast<Expr>(CE)) {
-            V = adjustReturnValue(V, Ex->getType(), ReturnedTy,
-                                  getStoreManager());
-          }
+          V = adjustReturnValue(V, CE->getType(), ReturnedTy,
+                                getStoreManager());
         }
       }
 
-      if (const auto *CEExpr = dyn_cast<Expr>(CE))
-        State = State->BindExpr(CEExpr, CallerCtx, V);
+      State = State->BindExpr(CE, CallerCtx, V);
     }
 
     // Bind the constructed object value to CXXConstructExpr.
