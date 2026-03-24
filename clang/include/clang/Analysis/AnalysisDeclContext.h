@@ -300,7 +300,7 @@ class StackFrameContext : public LocationContext {
   friend class LocationContextManager;
 
   // The call site where this stack frame is established.
-  const Stmt *CallSite;
+  const Expr *CallSite;
 
   // The parent block of the call site.
   const CFGBlock *Block;
@@ -314,9 +314,9 @@ class StackFrameContext : public LocationContext {
   const unsigned Index;
 
   StackFrameContext(AnalysisDeclContext *ADC, const LocationContext *ParentLC,
-                    const Stmt *S, const CFGBlock *Block, unsigned BlockCount,
+                    const Expr *E, const CFGBlock *Block, unsigned BlockCount,
                     unsigned Index, int64_t ID)
-      : LocationContext(StackFrame, ADC, ParentLC, ID), CallSite(S),
+      : LocationContext(StackFrame, ADC, ParentLC, ID), CallSite(E),
         Block(Block), BlockCount(BlockCount), Index(Index) {}
 
 public:
@@ -335,10 +335,10 @@ public:
   void Profile(llvm::FoldingSetNodeID &ID) override;
 
   static void Profile(llvm::FoldingSetNodeID &ID, AnalysisDeclContext *ADC,
-                      const LocationContext *ParentLC, const Stmt *S,
+                      const LocationContext *ParentLC, const Expr *E,
                       const CFGBlock *Block, unsigned BlockCount,
                       unsigned Index) {
-    ProfileCommon(ID, StackFrame, ADC, ParentLC, S);
+    ProfileCommon(ID, StackFrame, ADC, ParentLC, E);
     ID.AddPointer(Block);
     ID.AddInteger(BlockCount);
     ID.AddInteger(Index);
