@@ -179,7 +179,7 @@ public:
 
   /// \copydoc LocationContextManager::getStackFrame()
   const StackFrameContext *getStackFrame(LocationContext const *ParentLC,
-                                         const Stmt *S, const CFGBlock *Blk,
+                                         const Expr *E, const CFGBlock *Blk,
                                          unsigned BlockCount, unsigned Index);
 
   /// \copydoc LocationContextManager::getBlockInvocationContext()

@@ -312,9 +312,9 @@ BodyFarm &AnalysisDeclContextManager::getBodyFarm() { return FunctionBodyFarm; }
 
 const StackFrameContext *
 AnalysisDeclContext::getStackFrame(const LocationContext *ParentLC,
-                                   const Stmt *S, const CFGBlock *Blk,
+                                   const Expr *E, const CFGBlock *Blk,
                                    unsigned BlockCount, unsigned Index) {
-  return getLocationContextManager().getStackFrame(this, ParentLC, S, Blk,
+  return getLocationContextManager().getStackFrame(this, ParentLC, E, Blk,
                                                    BlockCount, Index);
 }
 
