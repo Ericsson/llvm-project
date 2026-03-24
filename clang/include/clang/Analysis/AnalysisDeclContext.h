@@ -472,14 +472,6 @@ public:
                                    0);
   }
 
-  /// \copydoc LocationContextManager::getStackFrame()
-  const StackFrameContext *getStackFrame(AnalysisDeclContext *ADC,
-                                         const LocationContext *Parent,
-                                         const Expr *E, const CFGBlock *Block,
-                                         unsigned BlockCount, unsigned Index) {
-    return LocCtxMgr.getStackFrame(ADC, Parent, E, Block, BlockCount, Index);
-  }
-
   BodyFarm &getBodyFarm();
 
   /// Discard all previously created AnalysisDeclContexts.

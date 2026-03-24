@@ -186,7 +186,7 @@ CallEvent::getCalleeStackFrame(unsigned BlockCount) const {
         break;
   assert(Idx < Sz);
 
-  return ADC->getManager()->getStackFrame(ADC, LCtx, E, B, BlockCount, Idx);
+  return ADC->getStackFrame(LCtx, E, B, BlockCount, Idx);
 }
 
 const ParamVarRegion
