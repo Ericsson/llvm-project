@@ -428,15 +428,15 @@ void BlockInvocationContext::Profile(llvm::FoldingSetNodeID &ID) {
 //===----------------------------------------------------------------------===//
 
 const StackFrameContext *LocationContextManager::getStackFrame(
-    AnalysisDeclContext *ctx, const LocationContext *parent, const Stmt *s,
+    AnalysisDeclContext *ctx, const LocationContext *parent, const Expr *E,
     const CFGBlock *blk, unsigned blockCount, unsigned idx) {
   llvm::FoldingSetNodeID ID;
-  StackFrameContext::Profile(ID, ctx, parent, s, blk, blockCount, idx);
+  StackFrameContext::Profile(ID, ctx, parent, E, blk, blockCount, idx);
   void *InsertPos;
   auto *L =
    cast_or_null<StackFrameContext>(Contexts.FindNodeOrInsertPos(ID, InsertPos));
   if (!L) {
-    L = new StackFrameContext(ctx, parent, s, blk, blockCount, idx, ++NewID);
+    L = new StackFrameContext(ctx, parent, E, blk, blockCount, idx, ++NewID);
     Contexts.InsertNode(L, InsertPos);
   }
   return L;
