@@ -475,9 +475,9 @@ public:
   /// \copydoc LocationContextManager::getStackFrame()
   const StackFrameContext *getStackFrame(AnalysisDeclContext *ADC,
                                          const LocationContext *Parent,
-                                         const Stmt *S, const CFGBlock *Block,
+                                         const Expr *E, const CFGBlock *Block,
                                          unsigned BlockCount, unsigned Index) {
-    return LocCtxMgr.getStackFrame(ADC, Parent, S, Block, BlockCount, Index);
+    return LocCtxMgr.getStackFrame(ADC, Parent, E, Block, BlockCount, Index);
   }
 
   BodyFarm &getBodyFarm();
