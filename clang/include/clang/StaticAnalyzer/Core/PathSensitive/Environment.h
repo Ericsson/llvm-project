@@ -32,6 +32,12 @@ class SymbolReaper;
 /// This allows the environment to manage context-sensitive bindings,
 /// which is essentially for modeling recursive function analysis, among
 /// other things.
+/// FIXME: Use 'Expr' instead of 'Stmt' because associating a result with a
+/// non-expression statement does not make sense. Currently the environment
+/// never contains non-expression statements; and there is only one
+/// easy-to-eliminate hack in 'processCallExit' and 'Environment::getSVal' that
+/// constructs and handles 'EnvironmentEntry' instances with a 'ReturnStmt' as
+/// the 'first' part.
 class EnvironmentEntry : public std::pair<const Stmt *,
                                           const StackFrameContext *> {
 public:
