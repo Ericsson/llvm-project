@@ -58,7 +58,7 @@ public:
   }
 };
 
-/// An immutable map from EnvironemntEntries to SVals.
+/// An immutable map from EnvironmentEntries to SVals.
 class Environment {
 private:
   friend class EnvironmentManager;
