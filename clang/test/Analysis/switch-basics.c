@@ -93,6 +93,19 @@ int switch_no_compound_stmt(int x) {
   return 0;
 }
 
+int switch_empty(int x) {
+  // Validate that the engine does not crash on these "empty" switches.
+  // (These are pretty useless and the second is reported by a compiler
+  // warning, but the analyzer should still be prepared to handle them.)
+
+  switch (x) {}
+
+  switch (x); // expected-warning {{Switch statement has empty body}}
+
+  return 0;
+}
+
+
 int switch_with_case_range(int x) {
   // Validate that the GNU case range extension is properly handled.
   switch (x) {
