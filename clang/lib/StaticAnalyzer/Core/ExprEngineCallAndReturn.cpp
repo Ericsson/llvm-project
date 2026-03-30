@@ -1229,9 +1229,6 @@ void ExprEngine::defaultEvalCall(NodeBuilder &Bldr, ExplodedNode *Pred,
 
   const Expr *E = Call.getOriginExpr();
 
-  // Try to inline the call. Note that `getInlineFailedStates` only uses its
-  // second argument in an assertion, so this should still be safe even for
-  // calls that don't come from exprs.
   ProgramStateRef InlinedFailedState = getInlineFailedState(State, E);
   if (InlinedFailedState) {
     // If we already tried once and failed, make sure we don't retry later.

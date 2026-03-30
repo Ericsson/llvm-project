@@ -2518,11 +2518,14 @@ bool ExprEngine::replayWithoutInlining(ExplodedNode *N,
       BeforeProcessingCall->getLocationContext(), CE, nullptr, &PT);
   // Add the special flag to GDM to signal retrying with no inlining.
   // Note, changing the state ensures that we are not going to cache out.
-  // NOTE: This stores the call site (CE) in the state trait, but only the
-  // the actual pointer value is only checked by an assertion; for the analysis,
+  // NOTE: This stores the call site (CE) in the state trait, but the the
+  // actual pointer value is only checked by an assertion; for the analysis,
   // only the presence or absence of this trait matters.
-  // FIXME: I suspect that CE may be a nullpointer, which will be interpreted
-  // as the absence of this state trait (and does not prevent caching out).
+  // TODO: If we are handling a destructor call, CE is nullpointer (because it
+  // ultimately comes from the `Origin` of a `CXXDestructorCall`), which is
+  // indistinguishable from the absence (default state) of this state trait.
+  // I don't think that this bad logic causes actually observable problems, but
+  // it would be nice to clean it up if somebody has time to do so.
   ProgramStateRef NewNodeState = BeforeProcessingCall->getState();
   NewNodeState = NewNodeState->set<ReplayWithoutInlining>(CE);
 
