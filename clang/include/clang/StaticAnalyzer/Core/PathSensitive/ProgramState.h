@@ -278,8 +278,8 @@ public:
   // Binding and retrieving values to/from the environment and symbolic store.
   //==---------------------------------------------------------------------==//
 
-  /// Create a new state by binding the value 'V' to the expression 'E' in the
-  /// state's environment.
+  /// Create a new state by binding the value \p V to the expression \p E in
+  /// the state's environment.
   [[nodiscard]] ProgramStateRef BindExpr(const Expr *E,
                                          const LocationContext *LCtx, SVal V,
                                          bool Invalidate = true) const;
