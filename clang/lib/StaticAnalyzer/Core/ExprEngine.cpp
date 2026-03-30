@@ -2519,7 +2519,7 @@ bool ExprEngine::replayWithoutInlining(ExplodedNode *N,
   // Add the special flag to GDM to signal retrying with no inlining.
   // Note, changing the state ensures that we are not going to cache out.
   // NOTE: This stores the call site (CE) in the state trait, but only the
-  // the actual pointer value is only checked by an assertion; for the analysis
+  // the actual pointer value is only checked by an assertion; for the analysis,
   // only the presence or absence of this trait matters.
   // FIXME: I suspect that CE may be a nullpointer, which will be interpreted
   // as the absence of this state trait (and does not prevent caching out).
