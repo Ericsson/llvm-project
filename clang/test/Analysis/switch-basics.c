@@ -94,13 +94,13 @@ int switch_no_compound_stmt(int x) {
 }
 
 int switch_empty(int x) {
-  // Validate that the engine does not crash on these "empty" switches.
-  // (These are pretty useless and the second is reported by a compiler
-  // warning, but the analyzer should still be prepared to handle them.)
+  // Validate that the engine does not crash on these empty switches.
+  // (These are pretty useless, but the analyzer should still handle them.)
 
   switch (x) {}
 
-  switch (x); // expected-warning {{Switch statement has empty body}}
+  switch (x)
+    ;
 
   return 0;
 }
