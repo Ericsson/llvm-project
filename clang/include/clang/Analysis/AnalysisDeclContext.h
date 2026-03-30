@@ -400,7 +400,8 @@ public:
   /// \param E          The call expression.
   /// \param Block      The basic block.
   /// \param BlockCount The current count of entering into \p Block.
-  /// \param StmtIdx    The index of the call expression within \p Block.
+  /// \param StmtIdx    The index of the call expression \p E among the
+  ///                   statements of the CFGBlock \p Block.
   /// \returns The stack frame context corresponding to the call.
   const StackFrameContext *getStackFrame(AnalysisDeclContext *ADC,
                                          const LocationContext *ParentLC,
