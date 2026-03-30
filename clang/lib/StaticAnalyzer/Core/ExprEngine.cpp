@@ -3088,6 +3088,8 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
 
   // The block that is terminated by the switch statement.
   const CFGBlock *SwitchBlock = getCurrBlock();
+  // Note that successors may be null if they are pruned as unreachable.
+  assert(SwitchBlock->succ_size() && "Switch must have at least one successor");
   // The reversed iteration order is present since the beginning, when in 2008
   // commit 80ebc1d1c95704b0ff0386b3a3cbc8b3ff960654 added support for handling
   // switch statements. I don't see any advantage over regular forward
