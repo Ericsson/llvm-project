@@ -3157,6 +3157,10 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
     if (!State)
       continue;
 
+    // The default block may be null if it is "optimized out" by CFG creation.
+    if (!DefaultBlock)
+      continue;
+
     // If we have switch(enum value), the default branch is not
     // feasible if all of the enum constants not covered by 'case:' statements
     // are not feasible values for the switch condition.
@@ -3168,11 +3172,6 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
       if (Switch->isAllEnumCasesCovered())
         continue;
     }
-
-    // Basic correctness check for default blocks that are unreachable and not
-    // caught by earlier stages.
-    if (!DefaultBlock)
-      return;
 
     BlockEdge BE(SwitchBlock, DefaultBlock, LCtx);
     Dst.insert(Engine.makeNode(BE, State, Node));
