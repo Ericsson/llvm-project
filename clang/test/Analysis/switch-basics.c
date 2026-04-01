@@ -93,7 +93,7 @@ int switch_no_compound_stmt(int x) {
   return 0;
 }
 
-int switch_empty(int x) {
+void switch_empty(int x) {
   // Validate that the engine does not crash on these empty switches.
   // (These are pretty useless, but the analyzer should still handle them.)
 
@@ -101,10 +101,7 @@ int switch_empty(int x) {
 
   switch (x)
     ;
-
-  return 0;
 }
-
 
 int switch_with_case_range(int x) {
   // Validate that the GNU case range extension is properly handled.
