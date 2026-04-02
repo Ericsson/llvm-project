@@ -259,7 +259,10 @@ public:
   virtual RuntimeDefinition getRuntimeDefinition() const = 0;
 
   /// Returns the expression whose value will be the result of this call.
-  /// May be null.
+  /// As of now, returns null if and only if 'this' is a CXXDestructorCall.
+  /// This virtual method is overridden in derived classes to cast the origin
+  /// expression to a more specific type (e.g. in ObjCMethodCall it returns
+  /// 'cast<ObjCMessageExpr>(CallEvent::getOriginExpr)').
   virtual const Expr *getOriginExpr() const {
     return Origin.dyn_cast<const Expr *>();
   }
