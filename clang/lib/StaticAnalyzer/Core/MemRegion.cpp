@@ -1051,7 +1051,6 @@ const VarRegion *MemRegionManager::getVarRegion(const VarDecl *D,
       if (const auto *FD = dyn_cast<FunctionDecl>(CalleeDecl)) {
         CurrentParam =
             (Index < FD->param_size() && FD->getParamDecl(Index) == PVD);
-        assert(CurrentParam);
       } else if (const auto *BD = dyn_cast<BlockDecl>(CalleeDecl)) {
         CurrentParam =
             (Index < BD->param_size() && BD->getParamDecl(Index) == PVD);
