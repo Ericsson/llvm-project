@@ -1007,6 +1007,10 @@ public:
   }
 };
 
+// TODO: Currently MemRegionManager::getVarRegion returns NonParamVarRegion
+// instances to represent the parameters of the entrypoint stack frame and
+// parameters of outer stack frames that appear as captured within a lambda or
+// a block. This should be overhauled.
 class NonParamVarRegion : public VarRegion {
   friend class MemRegionManager;
 
