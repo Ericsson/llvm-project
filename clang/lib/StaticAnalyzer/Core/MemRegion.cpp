@@ -1074,7 +1074,7 @@ const VarRegion *MemRegionManager::getVarRegion(const VarDecl *D,
       // TODO: Parameters of the entrypoint stack frame (where `CallSite` is
       // null) are currently represented by `NonParamVarRegion`s. This behavior
       // is also present since 98db1f990fc273adc1ae36d4ce97ce66fd27ac30 which
-      // introduced `ParamVarRegion` in 2020, but it would be nice ot clean it
+      // introduced `ParamVarRegion` in 2020, but it would be nice to clean it
       // up for the sake of clarity and consistency.
     }
   }

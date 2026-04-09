@@ -1056,7 +1056,8 @@ public:
 /// ParamVarRegion - Represents a region for parameters. Only parameters of the
 /// function in the current stack frame are represented as `ParamVarRegion`s.
 /// Parameters of top-level analyzed functions as well as captured paremeters
-/// by lambdas and blocks are repesented as `VarRegion`s.
+/// by lambdas and blocks are repesented as `NonParamVarRegion`s.
+/// TODO: It would be nice to make this more consistent.
 
 // FIXME: `ParamVarRegion` only supports parameters of functions, C++
 // constructors, blocks and Objective-C methods with existing `Decl`. Upon
