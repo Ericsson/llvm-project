@@ -2834,6 +2834,8 @@ void ExprEngine::processBranch(
   assert((!Condition || !isa<CXXBindTemporaryExpr>(Condition)) &&
          "CXXBindTemporaryExprs are handled by processBindTemporary.");
 
+  const LocationContext *LC = Pred->getLocationContext();
+
   // Check for NULL conditions; e.g. "for(;;)"
   if (!Condition) {
     if (!DstT) {
@@ -2842,7 +2844,7 @@ void ExprEngine::processBranch(
       return;
     }
     NodeBuilder NullCondBldr(Dst, *currBldrCtx);
-    BlockEdge BE(getCurrBlock(), DstT, Pred->getLocationContext());
+    BlockEdge BE(getCurrBlock(), DstT, LC);
     NullCondBldr.generateNode(BE, Pred->getState(), Pred);
     return;
   }
@@ -2909,7 +2911,7 @@ void ExprEngine::processBranch(
       // we must ensure that it 'plays nicely' with this logic.
       if (!SkipTrueBranch || AMgr.options.ShouldWidenLoops) {
         if (DstT) {
-          BlockEdge BE(getCurrBlock(), DstT, PredN->getLocationContext());
+          BlockEdge BE(getCurrBlock(), DstT, LC);
           Builder.generateNode(BE, StTrue, PredN);
         }
       } else if (!AMgr.options.InlineFunctionsWithAmbiguousLoops) {
@@ -2928,7 +2930,6 @@ void ExprEngine::processBranch(
         // (activates if the third iteration can be entered, and will not
         // recognize cases where the fourth iteration would't be completed), but
         // should be good enough for practical purposes.
-        const LocationContext *LC = Pred->getLocationContext();
         if (!LC->inTopFrame()) {
           Engine.FunctionSummaries->markShouldNotInline(
               LC->getStackFrame()->getDecl());
@@ -2953,7 +2954,7 @@ void ExprEngine::processBranch(
       bool SkipFalseBranch = BothFeasible && BeforeFirstIteration &&
                              AMgr.options.ShouldAssumeAtLeastOneIteration;
       if (!SkipFalseBranch && DstF) {
-        BlockEdge BE(getCurrBlock(), DstF, PredN->getLocationContext());
+        BlockEdge BE(getCurrBlock(), DstF, LC);
         Builder.generateNode(BE, StFalse, PredN);
       }
     }
