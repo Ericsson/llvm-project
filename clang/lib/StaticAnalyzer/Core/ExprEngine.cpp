@@ -2548,20 +2548,6 @@ bool ExprEngine::replayWithoutInlining(ExplodedNode *N,
   return true;
 }
 
-/// Return the innermost location context which is inlined at `Node`, unless
-/// it's the top-level (entry point) location context.
-static const LocationContext *getInlinedLocationContext(ExplodedNode *Node,
-                                                        ExplodedGraph &G) {
-  const LocationContext *CalleeLC = Node->getLocation().getLocationContext();
-  const LocationContext *RootLC =
-      G.getRoot()->getLocation().getLocationContext();
-
-  if (CalleeLC->getStackFrame() == RootLC->getStackFrame())
-    return nullptr;
-
-  return CalleeLC;
-}
-
 /// Block entrance.  (Update counters).
 /// FIXME: `BlockEdge &L` is only used for debug statistics, consider removing
 /// it and using `BlockEntrance &BE` (where `BlockEntrance` is a subtype of
@@ -2621,7 +2607,8 @@ void ExprEngine::processCFGBlockEntrance(const BlockEdge &L,
     const ExplodedNode *Sink =
         Builder.generateSink(TaggedLoc, Pred->getState(), Pred);
 
-    if (const LocationContext *LC = getInlinedLocationContext(Pred, G)) {
+    const LocationContext *LC = Pred->getLocationContext();
+    if (!LC->inTopFrame()) {
       // FIXME: This will unconditionally prevent inlining this function (even
       // from other entry points), which is not a reasonable heuristic: even if
       // we reached max block count on this particular execution path, there
@@ -2941,7 +2928,8 @@ void ExprEngine::processBranch(
         // (activates if the third iteration can be entered, and will not
         // recognize cases where the fourth iteration would't be completed), but
         // should be good enough for practical purposes.
-        if (const LocationContext *LC = getInlinedLocationContext(Pred, G)) {
+        const LocationContext *LC = Pred->getLocationContext();
+        if (!LC->inTopFrame()) {
           Engine.FunctionSummaries->markShouldNotInline(
               LC->getStackFrame()->getDecl());
         }
