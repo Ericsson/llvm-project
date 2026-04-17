@@ -2843,9 +2843,8 @@ void ExprEngine::processBranch(
       // case is impossible, but I cannot prove this, so let's cover it.
       return;
     }
-    NodeBuilder NullCondBldr(Dst, *currBldrCtx);
     BlockEdge BE(getCurrBlock(), DstT, LC);
-    NullCondBldr.generateNode(BE, Pred->getState(), Pred);
+    Dst.insert(Engine.makeNode(BE, Pred->getState(), Pred));
     return;
   }
 
@@ -2864,7 +2863,6 @@ void ExprEngine::processBranch(
   if (CheckersOutSet.empty())
     return;
 
-  NodeBuilder Builder(Dst, *currBldrCtx);
   for (ExplodedNode *PredN : CheckersOutSet) {
     ProgramStateRef PrevState = PredN->getState();
 
@@ -2912,7 +2910,7 @@ void ExprEngine::processBranch(
       if (!SkipTrueBranch || AMgr.options.ShouldWidenLoops) {
         if (DstT) {
           BlockEdge BE(getCurrBlock(), DstT, LC);
-          Builder.generateNode(BE, StTrue, PredN);
+          Dst.insert(Engine.makeNode(BE, StTrue, PredN));
         }
       } else if (!AMgr.options.InlineFunctionsWithAmbiguousLoops) {
         // FIXME: There is an ancient and arbitrary heuristic in
@@ -2955,7 +2953,7 @@ void ExprEngine::processBranch(
                              AMgr.options.ShouldAssumeAtLeastOneIteration;
       if (!SkipFalseBranch && DstF) {
         BlockEdge BE(getCurrBlock(), DstF, LC);
-        Builder.generateNode(BE, StFalse, PredN);
+        Dst.insert(Engine.makeNode(BE, StFalse, PredN));
       }
     }
   }
