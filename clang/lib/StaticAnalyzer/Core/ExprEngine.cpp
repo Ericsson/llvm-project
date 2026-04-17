@@ -2875,7 +2875,7 @@ void ExprEngine::processBranch(
   if (CheckersOutSet.empty())
     return;
 
-  BranchNodeBuilder Builder(Dst, *currBldrCtx, DstT, DstF);
+  NodeBuilder Builder(Dst, *currBldrCtx);
   for (ExplodedNode *PredN : CheckersOutSet) {
     ProgramStateRef PrevState = PredN->getState();
 
@@ -2921,7 +2921,10 @@ void ExprEngine::processBranch(
       // default). If we intend to support and stabilize the loop widening,
       // we must ensure that it 'plays nicely' with this logic.
       if (!SkipTrueBranch || AMgr.options.ShouldWidenLoops) {
-        Builder.generateNode(StTrue, true, PredN);
+        if (DstT) {
+          BlockEdge BE(getCurrBlock(), DstT, PredN->getLocationContext());
+          Builder.generateNode(BE, StTrue, PredN);
+        }
       } else if (!AMgr.options.InlineFunctionsWithAmbiguousLoops) {
         // FIXME: There is an ancient and arbitrary heuristic in
         // `ExprEngine::processCFGBlockEntrance` which prevents all further
@@ -2961,8 +2964,10 @@ void ExprEngine::processBranch(
       bool BeforeFirstIteration = IterationsCompletedInLoop == std::optional{0};
       bool SkipFalseBranch = BothFeasible && BeforeFirstIteration &&
                              AMgr.options.ShouldAssumeAtLeastOneIteration;
-      if (!SkipFalseBranch)
-        Builder.generateNode(StFalse, false, PredN);
+      if (!SkipFalseBranch && DstF) {
+        BlockEdge BE(getCurrBlock(), DstF, PredN->getLocationContext());
+        Builder.generateNode(BE, StFalse, PredN);
+      }
     }
   }
 }
