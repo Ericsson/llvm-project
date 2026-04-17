@@ -2980,13 +2980,15 @@ void ExprEngine::processStaticInitializer(const DeclStmt *DS,
   const auto *VD = cast<VarDecl>(DS->getSingleDecl());
   ProgramStateRef state = Pred->getState();
   bool initHasRun = state->contains<InitializedGlobalsSet>(VD);
-  BranchNodeBuilder Builder(Dst, *currBldrCtx, DstT, DstF);
+  NodeBuilder Builder(Dst, *currBldrCtx);
 
-  if (!initHasRun) {
+  if (!initHasRun)
     state = state->add<InitializedGlobalsSet>(VD);
-  }
 
-  Builder.generateNode(state, initHasRun, Pred);
+  if (const CFGBlock *DstBlock = initHasRun ? DstT : DstF) {
+    BlockEdge BE(getCurrBlock(), DstBlock, Pred->getLocationContext());
+    Builder.generateNode(BE, state, Pred);
+  }
 }
 
 /// processIndirectGoto - Called by CoreEngine.  Used to generate successor
