@@ -67,7 +67,6 @@ class ExplodedNode : public llvm::FoldingSetNode {
   friend class CoreEngine;
   friend class ExplodedGraph;
   friend class NodeBuilder;
-  friend class SwitchNodeBuilder;
 
   /// Efficiently stores a list of ExplodedNodes, or an optional flag.
   ///
