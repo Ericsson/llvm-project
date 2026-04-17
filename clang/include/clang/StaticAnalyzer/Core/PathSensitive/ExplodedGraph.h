@@ -64,7 +64,6 @@ class ExplodedGraph;
 // successors to it at any time after creating it.
 
 class ExplodedNode : public llvm::FoldingSetNode {
-  friend class BranchNodeBuilder;
   friend class CoreEngine;
   friend class ExplodedGraph;
   friend class NodeBuilder;
