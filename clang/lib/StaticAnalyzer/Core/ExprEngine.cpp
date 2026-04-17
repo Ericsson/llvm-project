@@ -2983,16 +2983,16 @@ void ExprEngine::processStaticInitializer(const DeclStmt *DS,
                                           const CFGBlock *DstT,
                                           const CFGBlock *DstF) {
   const auto *VD = cast<VarDecl>(DS->getSingleDecl());
-  ProgramStateRef state = Pred->getState();
-  bool initHasRun = state->contains<InitializedGlobalsSet>(VD);
+  ProgramStateRef State = Pred->getState();
+  bool InitHasRun = State->contains<InitializedGlobalsSet>(VD);
   NodeBuilder Builder(Dst, *currBldrCtx);
 
-  if (!initHasRun)
-    state = state->add<InitializedGlobalsSet>(VD);
+  if (!InitHasRun)
+    State = State->add<InitializedGlobalsSet>(VD);
 
-  if (const CFGBlock *DstBlock = initHasRun ? DstT : DstF) {
+  if (const CFGBlock *DstBlock = InitHasRun ? DstT : DstF) {
     BlockEdge BE(getCurrBlock(), DstBlock, Pred->getLocationContext());
-    Builder.generateNode(BE, state, Pred);
+    Builder.generateNode(BE, State, Pred);
   }
 }
 
