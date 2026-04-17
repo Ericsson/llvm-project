@@ -2849,8 +2849,14 @@ void ExprEngine::processBranch(
 
   // Check for NULL conditions; e.g. "for(;;)"
   if (!Condition) {
-    BranchNodeBuilder NullCondBldr(Dst, *currBldrCtx, DstT, DstF);
-    NullCondBldr.generateNode(Pred->getState(), true, Pred);
+    if (!DstT) {
+      // I _hope_ that this "null condition + null transition to loop body"
+      // case is impossible, but I cannot prove this, so let's cover it.
+      return;
+    }
+    NodeBuilder NullCondBldr(Dst, *currBldrCtx);
+    BlockEdge BE(getCurrBlock(), DstT, Pred->getLocationContext());
+    NullCondBldr.generateNode(BE, Pred->getState(), Pred);
     return;
   }
 
