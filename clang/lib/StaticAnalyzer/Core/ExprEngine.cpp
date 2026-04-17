@@ -1641,14 +1641,13 @@ void ExprEngine::processCleanupTemporaryBranch(const CXXBindTemporaryExpr *BTE,
                                                ExplodedNodeSet &Dst,
                                                const CFGBlock *DstT,
                                                const CFGBlock *DstF) {
-  NodeBuilder TempDtorBuilder(Dst, *currBldrCtx);
   ProgramStateRef State = Pred->getState();
   const LocationContext *LC = Pred->getLocationContext();
 
   std::optional<SVal> Obj = getObjectUnderConstruction(State, BTE, LC);
   if (const CFGBlock *DstBlock = Obj ? DstT : DstF) {
     BlockEdge BE(getCurrBlock(), DstBlock, LC);
-    TempDtorBuilder.generateNode(BE, State, Pred);
+    Dst.insert(Engine.makeNode(BE, State, Pred));
   }
 }
 
@@ -2972,14 +2971,12 @@ void ExprEngine::processStaticInitializer(const DeclStmt *DS,
   const auto *VD = cast<VarDecl>(DS->getSingleDecl());
   ProgramStateRef State = Pred->getState();
   bool InitHasRun = State->contains<InitializedGlobalsSet>(VD);
-  NodeBuilder Builder(Dst, *currBldrCtx);
-
   if (!InitHasRun)
     State = State->add<InitializedGlobalsSet>(VD);
 
   if (const CFGBlock *DstBlock = InitHasRun ? DstT : DstF) {
     BlockEdge BE(getCurrBlock(), DstBlock, Pred->getLocationContext());
-    Builder.generateNode(BE, State, Pred);
+    Dst.insert(Engine.makeNode(BE, State, Pred));
   }
 }
 
