@@ -1641,13 +1641,14 @@ void ExprEngine::processCleanupTemporaryBranch(const CXXBindTemporaryExpr *BTE,
                                                ExplodedNodeSet &Dst,
                                                const CFGBlock *DstT,
                                                const CFGBlock *DstF) {
-  BranchNodeBuilder TempDtorBuilder(Dst, *currBldrCtx, DstT, DstF);
+  NodeBuilder TempDtorBuilder(Dst, *currBldrCtx);
   ProgramStateRef State = Pred->getState();
   const LocationContext *LC = Pred->getLocationContext();
-  if (getObjectUnderConstruction(State, BTE, LC)) {
-    TempDtorBuilder.generateNode(State, true, Pred);
-  } else {
-    TempDtorBuilder.generateNode(State, false, Pred);
+
+  std::optional<SVal> Obj = getObjectUnderConstruction(State, BTE, LC);
+  if (const CFGBlock *DstBlock = Obj ? DstT : DstF) {
+    BlockEdge BE(getCurrBlock(), DstBlock, LC);
+    TempDtorBuilder.generateNode(BE, State, Pred);
   }
 }
 
