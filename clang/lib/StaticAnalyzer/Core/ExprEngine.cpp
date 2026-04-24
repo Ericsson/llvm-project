@@ -3507,46 +3507,46 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
   ExplodedNodeSet EvalSet;
   ValueDecl *Member = M->getMemberDecl();
 
-  for (const auto I : CheckedSet) {
+  for (ExplodedNode *Node : CheckedSet) {
     if (isa<VarDecl, EnumConstantDecl>(Member)) {
       // Handle static member variables and enum constants accessed via
       // member syntax.
-      VisitCommonDeclRefExpr(M, Member, I, EvalSet);
+      VisitCommonDeclRefExpr(M, Member, Node, EvalSet);
       continue;
     }
 
-    ProgramStateRef state = I->getState();
+    ProgramStateRef State = Node->getState();
     Expr *BaseExpr = M->getBase();
 
     // Handle C++ method calls.
     if (const auto *MD = dyn_cast<CXXMethodDecl>(Member)) {
       if (MD->isImplicitObjectMemberFunction())
-        state = createTemporaryRegionIfNeeded(state, LCtx, BaseExpr);
+        State = createTemporaryRegionIfNeeded(State, LCtx, BaseExpr);
 
       SVal MDVal = svalBuilder.getFunctionPointer(MD);
 
-      EvalSet.insert(Engine.makeNodeWithBinding(I, M, MDVal, state));
+      EvalSet.insert(Engine.makeNodeWithBinding(Node, M, MDVal, State));
       continue;
     }
 
     // Handle regular struct fields / member variables.
     const SubRegion *MR = nullptr;
-    state = createTemporaryRegionIfNeeded(state, LCtx, BaseExpr,
+    State = createTemporaryRegionIfNeeded(State, LCtx, BaseExpr,
                                           /*Result=*/nullptr,
                                           /*OutRegionWithAdjustments=*/&MR);
-    SVal baseExprVal =
-        MR ? loc::MemRegionVal(MR) : state->getSVal(BaseExpr, LCtx);
+    SVal BaseExprVal =
+        MR ? loc::MemRegionVal(MR) : State->getSVal(BaseExpr, LCtx);
 
     // FIXME: Copied from RegionStoreManager::bind()
     if (const auto *SR =
-            dyn_cast_or_null<SymbolicRegion>(baseExprVal.getAsRegion())) {
+            dyn_cast_or_null<SymbolicRegion>(BaseExprVal.getAsRegion())) {
       QualType T = SR->getPointeeStaticType();
-      baseExprVal =
+      BaseExprVal =
           loc::MemRegionVal(getStoreManager().GetElementZeroRegion(SR, T));
     }
 
-    const auto *field = cast<FieldDecl>(Member);
-    SVal L = state->getLValue(field, baseExprVal);
+    const auto *Field = cast<FieldDecl>(Member);
+    SVal LValue = State->getLValue(Field, BaseExprVal);
 
     if (M->isGLValue() || M->getType()->isArrayType()) {
       // We special-case rvalues of array type because the analyzer cannot
@@ -3556,23 +3556,23 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
       if (!M->isGLValue()) {
         assert(M->getType()->isArrayType());
         const auto *PE = dyn_cast<ImplicitCastExpr>(
-            I->getParentMap().getParentIgnoreParens(M));
+            Node->getParentMap().getParentIgnoreParens(M));
         if (!PE || PE->getCastKind() != CK_ArrayToPointerDecay) {
           llvm_unreachable("should always be wrapped in ArrayToPointerDecay");
         }
       }
 
-      if (field->getType()->isReferenceType()) {
-        if (const MemRegion *R = L.getAsRegion())
-          L = state->getSVal(R);
+      if (Field->getType()->isReferenceType()) {
+        if (const MemRegion *R = LValue.getAsRegion())
+          LValue = State->getSVal(R);
         else
-          L = UnknownVal();
+          LValue = UnknownVal();
       }
 
-      EvalSet.insert(Engine.makeNodeWithBinding(I, M, L, state,
+      EvalSet.insert(Engine.makeNodeWithBinding(Node, M, LValue, State,
                                                 ProgramPoint::PostLValueKind));
     } else {
-      evalLoad(EvalSet, M, M, I, state, L);
+      evalLoad(EvalSet, M, M, Node, State, LValue);
     }
   }
 
