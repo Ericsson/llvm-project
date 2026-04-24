@@ -1569,13 +1569,11 @@ void ExprEngine::ProcessTemporaryDtor(const CFGTemporaryDtor D,
   const LocationContext *LC = Pred->getLocationContext();
   const MemRegion *MR = nullptr;
 
-  if (std::optional<SVal> V = getObjectUnderConstruction(
-          State, D.getBindTemporaryExpr(), Pred->getLocationContext())) {
+  if (std::optional<SVal> V = getObjectUnderConstruction(State, BTE, LC)) {
     // FIXME: Currently we insert temporary destructors for default parameters,
     // but we don't insert the constructors, so the entry in
     // ObjectsUnderConstruction may be missing.
-    State = finishObjectConstruction(State, D.getBindTemporaryExpr(),
-                                     Pred->getLocationContext());
+    State = finishObjectConstruction(State, BTE, LC);
     MR = V->getAsRegion();
   }
 
@@ -1583,16 +1581,13 @@ void ExprEngine::ProcessTemporaryDtor(const CFGTemporaryDtor D,
   // destructor was elided, we need to skip the destructor as well.
   if (isDestructorElided(State, BTE, LC)) {
     State = cleanupElidedDestructor(State, BTE, LC);
-    NodeBuilder Bldr(Pred, Dst, *currBldrCtx);
-    PostImplicitCall PP(D.getDestructorDecl(getContext()),
-                        D.getBindTemporaryExpr()->getBeginLoc(),
-                        Pred->getLocationContext(), getCFGElementRef());
-    Bldr.generateNode(PP, State, Pred);
+    PostImplicitCall PP(D.getDestructorDecl(getContext()), BTE->getBeginLoc(),
+                        LC, getCFGElementRef());
+    Dst.insert(Engine.makeNode(PP, State, Pred));
     return;
   }
 
-  ExplodedNode *CleanPred =
-      Engine.makePostStmtNode(D.getBindTemporaryExpr(), State, Pred);
+  ExplodedNode *CleanPred = Engine.makePostStmtNode(BTE, State, Pred);
   if (!CleanPred || CleanPred->isSink()) {
     // FIXME: We can get a null node here due to temporaries being
     // bound to default parameters.
@@ -1600,7 +1595,7 @@ void ExprEngine::ProcessTemporaryDtor(const CFGTemporaryDtor D,
     CleanPred = Pred;
   }
 
-  QualType T = D.getBindTemporaryExpr()->getSubExpr()->getType();
+  QualType T = BTE->getSubExpr()->getType();
 
   EvalCallOptions CallOpts;
   CallOpts.IsTemporaryCtorOrDtor = true;
@@ -1633,7 +1628,7 @@ void ExprEngine::ProcessTemporaryDtor(const CFGTemporaryDtor D,
     // but for now we don't have the respective construction contexts,
     // so MR would always be null in this case. Do nothing for now.
   }
-  VisitCXXDestructor(T, MR, D.getBindTemporaryExpr(),
+  VisitCXXDestructor(T, MR, BTE,
                      /*IsBase=*/false, CleanPred, Dst, CallOpts);
 }
 
