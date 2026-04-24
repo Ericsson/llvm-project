@@ -3797,14 +3797,9 @@ void ExprEngine::evalStore(ExplodedNodeSet &Dst, const Expr *AssignE,
     evalBind(Dst, StoreE, I, location, Val, false);
 }
 
-void ExprEngine::evalLoad(ExplodedNodeSet &Dst,
-                          const Expr *NodeEx,
-                          const Expr *BoundEx,
-                          ExplodedNode *Pred,
-                          ProgramStateRef state,
-                          SVal location,
-                          const ProgramPointTag *tag,
-                          QualType LoadTy) {
+void ExprEngine::evalLoad(ExplodedNodeSet &Dst, const Expr *NodeEx,
+                          const Expr *BoundEx, ExplodedNode *Pred,
+                          ProgramStateRef state, SVal location) {
   assert(!isa<NonLoc>(location) && "location cannot be a NonLoc.");
   assert(NodeEx);
   assert(BoundEx);
@@ -3825,12 +3820,10 @@ void ExprEngine::evalLoad(ExplodedNodeSet &Dst,
 
     SVal V = UnknownVal();
     if (location.isValid()) {
-      if (LoadTy.isNull())
-        LoadTy = BoundEx->getType();
-      V = state->getSVal(location.castAs<Loc>(), LoadTy);
+      V = state->getSVal(location.castAs<Loc>(), BoundEx->getType());
     }
 
-    Bldr.generateNode(NodeEx, I, state->BindExpr(BoundEx, LCtx, V), tag,
+    Bldr.generateNode(NodeEx, I, state->BindExpr(BoundEx, LCtx, V), nullptr,
                       ProgramPoint::PostLoadKind);
   }
 }
