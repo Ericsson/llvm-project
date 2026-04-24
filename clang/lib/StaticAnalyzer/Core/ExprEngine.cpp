@@ -1591,16 +1591,16 @@ void ExprEngine::ProcessTemporaryDtor(const CFGTemporaryDtor D,
     return;
   }
 
-  ExplodedNodeSet CleanDtorState;
-  NodeBuilder Builder(Pred, CleanDtorState, *currBldrCtx);
-  Builder.generateNode(D.getBindTemporaryExpr(), Pred, State);
+  ExplodedNode *CleanPred =
+      Engine.makePostStmtNode(D.getBindTemporaryExpr(), State, Pred);
+  if (!CleanPred || CleanPred->isSink()) {
+    // FIXME: We can get a null node here due to temporaries being
+    // bound to default parameters.
+    // Sink check is just PosteriorlyOverconstrained paranoia.
+    CleanPred = Pred;
+  }
 
   QualType T = D.getBindTemporaryExpr()->getSubExpr()->getType();
-  // FIXME: Currently CleanDtorState can be empty here due to temporaries being
-  // bound to default parameters.
-  assert(CleanDtorState.size() <= 1);
-  ExplodedNode *CleanPred =
-      CleanDtorState.empty() ? Pred : *CleanDtorState.begin();
 
   EvalCallOptions CallOpts;
   CallOpts.IsTemporaryCtorOrDtor = true;
