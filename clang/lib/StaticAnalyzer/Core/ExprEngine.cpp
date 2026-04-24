@@ -3219,12 +3219,11 @@ void ExprEngine::VisitCommonDeclRefExpr(const Expr *Ex, const NamedDecl *D,
     // C permits "extern void v", and if you cast the address to a valid type,
     // you can even do things with it. We simply pretend
     assert(Ex->isGLValue() || VD->getType()->isVoidType());
-    const LocationContext *LocCtxt = Pred->getLocationContext();
     std::optional<std::pair<SVal, QualType>> VInfo =
         resolveAsLambdaCapturedVar(VD);
 
     if (!VInfo)
-      VInfo = std::make_pair(state->getLValue(VD, LocCtxt), VD->getType());
+      VInfo = std::make_pair(state->getLValue(VD, LCtx), VD->getType());
 
     SVal V = VInfo->first;
     bool IsReference = VInfo->second->isReferenceType();
