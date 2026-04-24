@@ -3806,8 +3806,6 @@ void ExprEngine::evalLoad(ExplodedNodeSet &Dst, const Expr *NodeEx,
   // Evaluate the location (checks for bad dereferences).
   ExplodedNodeSet Tmp;
   evalLocation(Tmp, NodeEx, BoundEx, Pred, State, Location, true);
-  if (Tmp.empty())
-    return;
 
   if (Location.isUndef())
     return;
@@ -3824,7 +3822,7 @@ void ExprEngine::evalLoad(ExplodedNodeSet &Dst, const Expr *NodeEx,
 
     // NOTE: The following three lines are very close to
     //   Dst.insert(Engine.makeNodeWithBinding(Node, <EXPR>, V));
-    // instead of a single common <EXPR>ession we have NodeEx (for the program
+    // but instead of a common <EXPR>ession we have NodeEx (for the program
     // point) and BoundEx (where the value is placed in the environment).
     // These differ when the load is part of an increment, decrement or
     // compound assignment operator, where NodeEx is the full expression but
