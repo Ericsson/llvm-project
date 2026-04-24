@@ -3505,73 +3505,73 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
   ExplodedNodeSet EvalSet;
   ValueDecl *Member = M->getMemberDecl();
 
-  // Handle static member variables and enum constants accessed via
-  // member syntax.
-  if (isa<VarDecl, EnumConstantDecl>(Member)) {
-    for (const auto I : CheckedSet)
+  for (const auto I : CheckedSet) {
+    if (isa<VarDecl, EnumConstantDecl>(Member)) {
+      // Handle static member variables and enum constants accessed via
+      // member syntax.
       VisitCommonDeclRefExpr(M, Member, I, EvalSet);
-  } else {
-    for (const auto I : CheckedSet) {
-      ProgramStateRef state = I->getState();
-      const LocationContext *LCtx = I->getLocationContext();
-      Expr *BaseExpr = M->getBase();
+      continue;
+    }
 
-      // Handle C++ method calls.
-      if (const auto *MD = dyn_cast<CXXMethodDecl>(Member)) {
-        if (MD->isImplicitObjectMemberFunction())
-          state = createTemporaryRegionIfNeeded(state, LCtx, BaseExpr);
+    ProgramStateRef state = I->getState();
+    const LocationContext *LCtx = I->getLocationContext();
+    Expr *BaseExpr = M->getBase();
 
-        SVal MDVal = svalBuilder.getFunctionPointer(MD);
+    // Handle C++ method calls.
+    if (const auto *MD = dyn_cast<CXXMethodDecl>(Member)) {
+      if (MD->isImplicitObjectMemberFunction())
+        state = createTemporaryRegionIfNeeded(state, LCtx, BaseExpr);
 
-        EvalSet.insert(Engine.makeNodeWithBinding(I, M, MDVal, state));
-        continue;
-      }
+      SVal MDVal = svalBuilder.getFunctionPointer(MD);
 
-      // Handle regular struct fields / member variables.
-      const SubRegion *MR = nullptr;
-      state = createTemporaryRegionIfNeeded(state, LCtx, BaseExpr,
-                                            /*Result=*/nullptr,
-                                            /*OutRegionWithAdjustments=*/&MR);
-      SVal baseExprVal =
-          MR ? loc::MemRegionVal(MR) : state->getSVal(BaseExpr, LCtx);
+      EvalSet.insert(Engine.makeNodeWithBinding(I, M, MDVal, state));
+      continue;
+    }
 
-      // FIXME: Copied from RegionStoreManager::bind()
-      if (const auto *SR =
-              dyn_cast_or_null<SymbolicRegion>(baseExprVal.getAsRegion())) {
-        QualType T = SR->getPointeeStaticType();
-        baseExprVal =
-            loc::MemRegionVal(getStoreManager().GetElementZeroRegion(SR, T));
-      }
+    // Handle regular struct fields / member variables.
+    const SubRegion *MR = nullptr;
+    state = createTemporaryRegionIfNeeded(state, LCtx, BaseExpr,
+                                          /*Result=*/nullptr,
+                                          /*OutRegionWithAdjustments=*/&MR);
+    SVal baseExprVal =
+        MR ? loc::MemRegionVal(MR) : state->getSVal(BaseExpr, LCtx);
 
-      const auto *field = cast<FieldDecl>(Member);
-      SVal L = state->getLValue(field, baseExprVal);
+    // FIXME: Copied from RegionStoreManager::bind()
+    if (const auto *SR =
+            dyn_cast_or_null<SymbolicRegion>(baseExprVal.getAsRegion())) {
+      QualType T = SR->getPointeeStaticType();
+      baseExprVal =
+          loc::MemRegionVal(getStoreManager().GetElementZeroRegion(SR, T));
+    }
 
-      if (M->isGLValue() || M->getType()->isArrayType()) {
-        // We special-case rvalues of array type because the analyzer cannot
-        // reason about them, since we expect all regions to be wrapped in Locs.
-        // We instead treat these as lvalues and assume that they will decay to
-        // pointers as soon as they are used.
-        if (!M->isGLValue()) {
-          assert(M->getType()->isArrayType());
-          const auto *PE =
-            dyn_cast<ImplicitCastExpr>(I->getParentMap().getParentIgnoreParens(M));
-          if (!PE || PE->getCastKind() != CK_ArrayToPointerDecay) {
-            llvm_unreachable("should always be wrapped in ArrayToPointerDecay");
-          }
+    const auto *field = cast<FieldDecl>(Member);
+    SVal L = state->getLValue(field, baseExprVal);
+
+    if (M->isGLValue() || M->getType()->isArrayType()) {
+      // We special-case rvalues of array type because the analyzer cannot
+      // reason about them, since we expect all regions to be wrapped in Locs.
+      // We instead treat these as lvalues and assume that they will decay to
+      // pointers as soon as they are used.
+      if (!M->isGLValue()) {
+        assert(M->getType()->isArrayType());
+        const auto *PE = dyn_cast<ImplicitCastExpr>(
+            I->getParentMap().getParentIgnoreParens(M));
+        if (!PE || PE->getCastKind() != CK_ArrayToPointerDecay) {
+          llvm_unreachable("should always be wrapped in ArrayToPointerDecay");
         }
-
-        if (field->getType()->isReferenceType()) {
-          if (const MemRegion *R = L.getAsRegion())
-            L = state->getSVal(R);
-          else
-            L = UnknownVal();
-        }
-
-        EvalSet.insert(Engine.makeNodeWithBinding(
-            I, M, L, state, ProgramPoint::PostLValueKind));
-      } else {
-        evalLoad(EvalSet, M, M, I, state, L);
       }
+
+      if (field->getType()->isReferenceType()) {
+        if (const MemRegion *R = L.getAsRegion())
+          L = state->getSVal(R);
+        else
+          L = UnknownVal();
+      }
+
+      EvalSet.insert(Engine.makeNodeWithBinding(I, M, L, state,
+                                                ProgramPoint::PostLValueKind));
+    } else {
+      evalLoad(EvalSet, M, M, I, state, L);
     }
   }
 
