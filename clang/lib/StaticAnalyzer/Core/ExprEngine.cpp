@@ -3432,6 +3432,13 @@ void ExprEngine::VisitArrayInitLoopExpr(const ArrayInitLoopExpr *Ex,
     else
       Base = UnknownVal();
 
+    // FIXME: This is logically incorrect: here we introduce a transition from
+    // 'Pred' (the node received as an argument of this method) instead of
+    // 'Node' (the loop variable, one of the nodes produced by the 'PreStmt'
+    // callbacks). I think this didn't cause visible errors only because
+    // 'ArrayInitLoopExpr' is a rare expression type and nobody actually
+    // defined 'PreStmt' callbacks for it.
+    // I will fix this soon in a separate non-NFC change.
     Bldr.generateNode(Ex, Pred, state->BindExpr(Ex, LCtx, Base));
   }
 
