@@ -3511,8 +3511,6 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
     for (const auto I : CheckedSet)
       VisitCommonDeclRefExpr(M, Member, I, EvalSet);
   } else {
-    ExplodedNodeSet Tmp;
-
     for (const auto I : CheckedSet) {
       ProgramStateRef state = I->getState();
       const LocationContext *LCtx = I->getLocationContext();
@@ -3572,6 +3570,7 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
         EvalSet.insert(Engine.makeNodeWithBinding(
             I, M, L, state, ProgramPoint::PostLValueKind));
       } else {
+        ExplodedNodeSet Tmp;
         evalLoad(Tmp, M, M, I, state, L);
         EvalSet.insert(Tmp);
       }
