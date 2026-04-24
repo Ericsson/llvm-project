@@ -748,10 +748,8 @@ public:
   // be the same as Pred->state, and when 'location' may not be the
   // same as state->getLValue(Ex).
   /// Simulate a read of the result of Ex.
-  void evalLoad(ExplodedNodeSet &Dst,
-                const Expr *NodeEx, /* Eventually will be a CFGStmt */
-                const Expr *BoundExpr, ExplodedNode *Pred, ProgramStateRef St,
-                SVal Location);
+  void evalLoad(ExplodedNodeSet &Dst, const Expr *NodeEx, const Expr *BoundExpr,
+                ExplodedNode *Pred, ProgramStateRef St, SVal Location);
 
   // FIXME: 'tag' should be removed, and a LocationContext should be used
   // instead.
