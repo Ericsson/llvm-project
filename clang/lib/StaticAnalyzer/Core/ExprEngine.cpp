@@ -3800,7 +3800,7 @@ void ExprEngine::evalStore(ExplodedNodeSet &Dst, const Expr *AssignE,
 void ExprEngine::evalLoad(ExplodedNodeSet &Dst, const Expr *NodeEx,
                           const Expr *BoundEx, ExplodedNode *Pred,
                           ProgramStateRef State, SVal Location) {
-  assert(!isa<NonLoc>(Location) && "location cannot be a NonLoc.");
+  assert(!isa<NonLoc>(Location) && "Location cannot be a NonLoc.");
   assert(NodeEx);
   assert(BoundEx);
   // Evaluate the location (checks for bad dereferences).
@@ -3809,7 +3809,6 @@ void ExprEngine::evalLoad(ExplodedNodeSet &Dst, const Expr *NodeEx,
   if (Tmp.empty())
     return;
 
-  NodeBuilder Bldr(Tmp, Dst, *currBldrCtx);
   if (Location.isUndef())
     return;
 
@@ -3823,8 +3822,16 @@ void ExprEngine::evalLoad(ExplodedNodeSet &Dst, const Expr *NodeEx,
       V = State->getSVal(Location.castAs<Loc>(), BoundEx->getType());
     }
 
-    Bldr.generateNode(NodeEx, Node, State->BindExpr(BoundEx, LCtx, V), nullptr,
-                      ProgramPoint::PostLoadKind);
+    // NOTE: The following three lines are very close to
+    //   Dst.insert(Engine.makeNodeWithBinding(Node, <EXPR>, V));
+    // instead of a single common <EXPR>ession we have NodeEx (for the program
+    // point) and BoundEx (where the value is placed in the environment).
+    // These differ when the load is part of an increment, decrement or
+    // compound assignment operator, where NodeEx is the full expression but
+    // BoundEx is just the operand / LHS from which the old value is loaded.
+    State = State->BindExpr(BoundEx, LCtx, V);
+    PostLoad PP(NodeEx, LCtx, /*tag=*/nullptr);
+    Dst.insert(Engine.makeNode(PP, State, Node));
   }
 }
 
