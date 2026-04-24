@@ -3511,7 +3511,6 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
     for (const auto I : CheckedSet)
       VisitCommonDeclRefExpr(M, Member, I, EvalSet);
   } else {
-    NodeBuilder Bldr(CheckedSet, EvalSet, *currBldrCtx);
     ExplodedNodeSet Tmp;
 
     for (const auto I : CheckedSet) {
@@ -3525,9 +3524,8 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
           state = createTemporaryRegionIfNeeded(state, LCtx, BaseExpr);
 
         SVal MDVal = svalBuilder.getFunctionPointer(MD);
-        state = state->BindExpr(M, LCtx, MDVal);
 
-        Bldr.generateNode(M, I, state);
+        EvalSet.insert(Engine.makeNodeWithBinding(I, M, MDVal, state));
         continue;
       }
 
@@ -3571,12 +3569,11 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
             L = UnknownVal();
         }
 
-        Bldr.generateNode(M, I, state->BindExpr(M, LCtx, L), nullptr,
-                          ProgramPoint::PostLValueKind);
+        EvalSet.insert(Engine.makeNodeWithBinding(
+            I, M, L, state, ProgramPoint::PostLValueKind));
       } else {
-        Bldr.takeNodes(I);
         evalLoad(Tmp, M, M, I, state, L);
-        Bldr.addNodes(Tmp);
+        EvalSet.insert(Tmp);
       }
     }
   }
