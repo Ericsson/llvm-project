@@ -3498,6 +3498,8 @@ a vector and not a forbidden lvalue type");
 /// VisitMemberExpr - Transfer function for member expressions.
 void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
                                  ExplodedNodeSet &Dst) {
+  const LocationContext *LCtx = Pred->getLocationContext();
+
   // FIXME: Prechecks eventually go in ::Visit().
   ExplodedNodeSet CheckedSet;
   getCheckerManager().runCheckersForPreStmt(CheckedSet, Pred, M, *this);
@@ -3514,7 +3516,6 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
     }
 
     ProgramStateRef state = I->getState();
-    const LocationContext *LCtx = I->getLocationContext();
     Expr *BaseExpr = M->getBase();
 
     // Handle C++ method calls.
