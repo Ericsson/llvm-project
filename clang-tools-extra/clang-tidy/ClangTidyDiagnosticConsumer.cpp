@@ -313,9 +313,7 @@ std::string ClangTidyContext::getCheckName(unsigned DiagnosticID) const {
 }
 
 bool ClangTidyContext::isCompilerDiagnostic(unsigned DiagnosticID) const {
-  const llvm::DenseMap<unsigned, std::string>::const_iterator I =
-      CheckNamesByDiagnosticID.find(DiagnosticID);
-  return I == CheckNamesByDiagnosticID.end();
+  return !CheckNamesByDiagnosticID.contains(DiagnosticID);
 }
 
 ClangTidyDiagnosticConsumer::ClangTidyDiagnosticConsumer(
