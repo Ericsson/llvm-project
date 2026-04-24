@@ -3570,9 +3570,7 @@ void ExprEngine::VisitMemberExpr(const MemberExpr *M, ExplodedNode *Pred,
         EvalSet.insert(Engine.makeNodeWithBinding(
             I, M, L, state, ProgramPoint::PostLValueKind));
       } else {
-        ExplodedNodeSet Tmp;
-        evalLoad(Tmp, M, M, I, state, L);
-        EvalSet.insert(Tmp);
+        evalLoad(EvalSet, M, M, I, state, L);
       }
     }
   }
