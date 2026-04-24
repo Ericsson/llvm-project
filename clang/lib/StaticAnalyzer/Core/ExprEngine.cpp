@@ -3799,31 +3799,31 @@ void ExprEngine::evalStore(ExplodedNodeSet &Dst, const Expr *AssignE,
 
 void ExprEngine::evalLoad(ExplodedNodeSet &Dst, const Expr *NodeEx,
                           const Expr *BoundEx, ExplodedNode *Pred,
-                          ProgramStateRef state, SVal location) {
-  assert(!isa<NonLoc>(location) && "location cannot be a NonLoc.");
+                          ProgramStateRef State, SVal Location) {
+  assert(!isa<NonLoc>(Location) && "location cannot be a NonLoc.");
   assert(NodeEx);
   assert(BoundEx);
   // Evaluate the location (checks for bad dereferences).
   ExplodedNodeSet Tmp;
-  evalLocation(Tmp, NodeEx, BoundEx, Pred, state, location, true);
+  evalLocation(Tmp, NodeEx, BoundEx, Pred, State, Location, true);
   if (Tmp.empty())
     return;
 
   NodeBuilder Bldr(Tmp, Dst, *currBldrCtx);
-  if (location.isUndef())
+  if (Location.isUndef())
     return;
 
   // Proceed with the load.
-  for (const auto I : Tmp) {
-    state = I->getState();
-    const LocationContext *LCtx = I->getLocationContext();
+  for (ExplodedNode *Node : Tmp) {
+    State = Node->getState();
+    const LocationContext *LCtx = Node->getLocationContext();
 
     SVal V = UnknownVal();
-    if (location.isValid()) {
-      V = state->getSVal(location.castAs<Loc>(), BoundEx->getType());
+    if (Location.isValid()) {
+      V = State->getSVal(Location.castAs<Loc>(), BoundEx->getType());
     }
 
-    Bldr.generateNode(NodeEx, I, state->BindExpr(BoundEx, LCtx, V), nullptr,
+    Bldr.generateNode(NodeEx, Node, State->BindExpr(BoundEx, LCtx, V), nullptr,
                       ProgramPoint::PostLoadKind);
   }
 }
