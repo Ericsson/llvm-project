@@ -3453,7 +3453,6 @@ void ExprEngine::VisitArraySubscriptExpr(const ArraySubscriptExpr *A,
   getCheckerManager().runCheckersForPreStmt(CheckerPreStmt, Pred, A, *this);
 
   ExplodedNodeSet EvalSet;
-  NodeBuilder Bldr(CheckerPreStmt, EvalSet, *currBldrCtx);
 
   bool IsVectorType = A->getBase()->getType()->isVectorType();
 
@@ -3479,11 +3478,11 @@ void ExprEngine::VisitArraySubscriptExpr(const ArraySubscriptExpr *A,
       SVal V = state->getLValue(T,
                                 state->getSVal(Idx, LCtx),
                                 state->getSVal(Base, LCtx));
-      Bldr.generateNode(A, Node, state->BindExpr(A, LCtx, V), nullptr,
-          ProgramPoint::PostLValueKind);
+      EvalSet.insert(
+          Engine.makeNodeWithBinding(Node, A, V, ProgramPoint::PostLValueKind));
     } else if (IsVectorType) {
       // FIXME: non-glvalue vector reads are not modelled.
-      Bldr.generateNode(A, Node, state, nullptr);
+      EvalSet.insert(Engine.makePostStmtNode(A, state, Node));
     } else {
       llvm_unreachable("Array subscript should be an lValue when not \
 a vector and not a forbidden lvalue type");
