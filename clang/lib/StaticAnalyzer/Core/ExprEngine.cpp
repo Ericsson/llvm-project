@@ -3187,8 +3187,6 @@ void ExprEngine::processSwitch(const SwitchStmt *Switch, ExplodedNode *Pred,
 void ExprEngine::VisitCommonDeclRefExpr(const Expr *Ex, const NamedDecl *D,
                                         ExplodedNode *Pred,
                                         ExplodedNodeSet &Dst) {
-  NodeBuilder Bldr(Pred, Dst, *currBldrCtx);
-
   ProgramStateRef state = Pred->getState();
   const LocationContext *LCtx = Pred->getLocationContext();
 
@@ -3240,20 +3238,20 @@ void ExprEngine::VisitCommonDeclRefExpr(const Expr *Ex, const NamedDecl *D,
         V = UnknownVal();
     }
 
-    Bldr.generateNode(Ex, Pred, state->BindExpr(Ex, LCtx, V), nullptr,
-                      ProgramPoint::PostLValueKind);
+    Dst.insert(
+        Engine.makeNodeWithBinding(Pred, Ex, V, ProgramPoint::PostLValueKind));
     return;
   }
   if (const auto *ED = dyn_cast<EnumConstantDecl>(D)) {
     assert(!Ex->isGLValue());
     SVal V = svalBuilder.makeIntVal(ED->getInitVal());
-    Bldr.generateNode(Ex, Pred, state->BindExpr(Ex, LCtx, V));
+    Dst.insert(Engine.makeNodeWithBinding(Pred, Ex, V));
     return;
   }
   if (const auto *FD = dyn_cast<FunctionDecl>(D)) {
     SVal V = svalBuilder.getFunctionPointer(FD);
-    Bldr.generateNode(Ex, Pred, state->BindExpr(Ex, LCtx, V), nullptr,
-                      ProgramPoint::PostLValueKind);
+    Dst.insert(
+        Engine.makeNodeWithBinding(Pred, Ex, V, ProgramPoint::PostLValueKind));
     return;
   }
   if (isa<FieldDecl, IndirectFieldDecl>(D)) {
@@ -3274,8 +3272,8 @@ void ExprEngine::VisitCommonDeclRefExpr(const Expr *Ex, const NamedDecl *D,
           V = UnknownVal();
       }
 
-      Bldr.generateNode(Ex, Pred, state->BindExpr(Ex, LCtx, V), nullptr,
-                        ProgramPoint::PostLValueKind);
+      Dst.insert(Engine.makeNodeWithBinding(Pred, Ex, V,
+                                            ProgramPoint::PostLValueKind));
       return;
     }
 
@@ -3329,9 +3327,8 @@ void ExprEngine::VisitCommonDeclRefExpr(const Expr *Ex, const NamedDecl *D,
         V = UnknownVal();
     }
 
-    Bldr.generateNode(Ex, Pred, state->BindExpr(Ex, LCtx, V), nullptr,
-                      ProgramPoint::PostLValueKind);
-
+    Dst.insert(
+        Engine.makeNodeWithBinding(Pred, Ex, V, ProgramPoint::PostLValueKind));
     return;
   }
 
