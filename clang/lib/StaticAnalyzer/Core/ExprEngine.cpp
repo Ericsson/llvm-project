@@ -1378,8 +1378,7 @@ void ExprEngine::ProcessAutomaticObjDtor(const CFGAutomaticObjDtor Dtor,
                           "which shouldn't be in the CFG.");
         PostImplicitCall PP(DtorDecl, varDecl->getLocation(), LCtx,
                             getCFGElementRef(), &PT);
-        NodeBuilder Bldr(Pred, Dst, *currBldrCtx);
-        Bldr.generateSink(PP, Pred->getState(), Pred);
+        Engine.makeNode(PP, Pred->getState(), Pred, /*MarkAsSink=*/true);
         return;
       }
     }
@@ -1390,17 +1389,14 @@ void ExprEngine::ProcessAutomaticObjDtor(const CFGAutomaticObjDtor Dtor,
                              CallOpts.IsArrayCtorOrDtor, Idx)
                .getAsRegion();
 
-  NodeBuilder Bldr(Pred, Dst, getBuilderContext());
-
   static SimpleProgramPointTag PT("ExprEngine",
                                   "Prepare for object destruction");
   PreImplicitCall PP(DtorDecl, varDecl->getLocation(), LCtx, getCFGElementRef(),
                      &PT);
-  Pred = Bldr.generateNode(PP, state, Pred);
+  Pred = Engine.makeNode(PP, state, Pred);
 
   if (!Pred)
     return;
-  Bldr.takeNodes(Pred);
 
   VisitCXXDestructor(varType, Region, Dtor.getTriggerStmt(),
                      /*IsBase=*/false, Pred, Dst, CallOpts);
