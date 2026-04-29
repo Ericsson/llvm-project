@@ -1420,8 +1420,7 @@ void ExprEngine::ProcessDeleteDtor(const CFGDeleteDtor Dtor,
     const CXXDestructorDecl *Dtor = RD->getDestructor();
 
     PostImplicitCall PP(Dtor, DE->getBeginLoc(), LCtx, getCFGElementRef());
-    NodeBuilder Bldr(Pred, Dst, *currBldrCtx);
-    Bldr.generateNode(PP, Pred->getState(), Pred);
+    Dst.insert(Engine.makeNode(PP, Pred->getState(), Pred));
     return;
   }
 
@@ -1454,8 +1453,7 @@ void ExprEngine::ProcessDeleteDtor(const CFGDeleteDtor Dtor,
             "ExprEngine", "Skipping 0 length array delete destruction");
         PostImplicitCall PP(getDtorDecl(DTy), DE->getBeginLoc(), LCtx,
                             getCFGElementRef(), &PT);
-        NodeBuilder Bldr(Pred, Dst, *currBldrCtx);
-        Bldr.generateNode(PP, Pred->getState(), Pred);
+        Dst.insert(Engine.makeNode(PP, Pred->getState(), Pred));
         return;
       }
 
@@ -1464,16 +1462,14 @@ void ExprEngine::ProcessDeleteDtor(const CFGDeleteDtor Dtor,
     }
   }
 
-  NodeBuilder Bldr(Pred, Dst, getBuilderContext());
   static SimpleProgramPointTag PT("ExprEngine",
                                   "Prepare for object destruction");
   PreImplicitCall PP(getDtorDecl(DTy), DE->getBeginLoc(), LCtx,
                      getCFGElementRef(), &PT);
-  Pred = Bldr.generateNode(PP, State, Pred);
+  Pred = Engine.makeNode(PP, State, Pred);
 
   if (!Pred)
     return;
-  Bldr.takeNodes(Pred);
 
   VisitCXXDestructor(DTy, ArgR, DE, /*IsBase=*/false, Pred, Dst, CallOpts);
 }
