@@ -710,7 +710,6 @@ void ExprEngine::evalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
   for (ExplodedNode *I : dstPostCall) {
     ProgramStateRef State = I->getState();
     CallEventRef<> Call = CallTemplate.cloneWithState(State);
-    NodeBuilder B(I, Dst, *currBldrCtx);
     Escaped.clear();
     {
       unsigned Arg = -1;
@@ -734,7 +733,7 @@ void ExprEngine::evalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
     if (State == I->getState())
       Dst.insert(I);
     else
-      B.generateNode(I->getLocation(), State, I);
+      Dst.insert(Engine.makeNode(I->getLocation(), State, I));
   }
 }
 
