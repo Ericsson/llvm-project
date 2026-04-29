@@ -730,10 +730,10 @@ void ExprEngine::evalCall(ExplodedNodeSet &Dst, ExplodedNode *Pred,
     State = processPointerEscapedOnBind(State, Escaped, I->getLocationContext(),
                                         PSK_EscapeOutParameters, &*Call);
 
-    if (State == I->getState())
-      Dst.insert(I);
-    else
-      Dst.insert(Engine.makeNode(I->getLocation(), State, I));
+    if (State != I->getState())
+      I = Engine.makeNode(I->getLocation(), State, I);
+
+    Dst.insert(I);
   }
 }
 
