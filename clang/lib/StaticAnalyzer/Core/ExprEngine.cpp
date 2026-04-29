@@ -1526,8 +1526,7 @@ void ExprEngine::ProcessMemberDtor(const CFGMemberDtor D,
                           "shouldn't be in the CFG.");
         PostImplicitCall PP(DtorDecl, Member->getLocation(), LCtx,
                             getCFGElementRef(), &PT);
-        NodeBuilder Bldr(Pred, Dst, *currBldrCtx);
-        Bldr.generateSink(PP, Pred->getState(), Pred);
+        Engine.makeNode(PP, Pred->getState(), Pred, /*MarkAsSink=*/true);
         return;
       }
     }
@@ -1537,17 +1536,14 @@ void ExprEngine::ProcessMemberDtor(const CFGMemberDtor D,
   FieldVal =
       makeElementRegion(State, FieldVal, T, CallOpts.IsArrayCtorOrDtor, Idx);
 
-  NodeBuilder Bldr(Pred, Dst, getBuilderContext());
-
   static SimpleProgramPointTag PT("ExprEngine",
                                   "Prepare for object destruction");
   PreImplicitCall PP(DtorDecl, Member->getLocation(), LCtx, getCFGElementRef(),
                      &PT);
-  Pred = Bldr.generateNode(PP, State, Pred);
+  Pred = Engine.makeNode(PP, State, Pred);
 
   if (!Pred)
     return;
-  Bldr.takeNodes(Pred);
 
   VisitCXXDestructor(T, FieldVal.getAsRegion(), CurDtor->getBody(),
                      /*IsBase=*/false, Pred, Dst, CallOpts);
