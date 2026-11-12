@@ -1182,10 +1182,17 @@ public:
 };
 }
 
+const MemRegion *stripElementRegions(const MemRegion *R) {
+  while (const auto *ER = dyn_cast<ElementRegion>(R)) {
+    R = ER->getSuperRegion();
+  }
+  return R;
+}
+
 bool InvalidateRegionsWorker::AddToWorkList(const MemRegion *R) {
   bool doNotInvalidateSuperRegion = ITraits.hasTrait(
       R, RegionAndSymbolInvalidationTraits::TK_DoNotInvalidateSuperRegion);
-  const MemRegion *BaseR = doNotInvalidateSuperRegion ? R : R->getBaseRegion();
+  const MemRegion *BaseR = doNotInvalidateSuperRegion ? R : stripElementRegions(R);
   return AddToWorkList(WorkListElement(BaseR), getCluster(BaseR));
 }
 
