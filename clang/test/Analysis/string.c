@@ -1471,7 +1471,7 @@ void memset12_struct_field(void) {
   pod.num = 1;
   pod.c = '1';
   memset(&pod.c, 0, sizeof(struct POD_memset)); // expected-warning {{'memset' will always overflow; destination buffer has size 4, but size argument is 8}}
-  clang_analyzer_eval(pod.num == 0); // expected-warning{{UNKNOWN}}
+  clang_analyzer_eval(pod.num == 0); // expected-warning{{FALSE}}
   clang_analyzer_eval(pod.c == 0);   // expected-warning{{UNKNOWN}}
 }
 

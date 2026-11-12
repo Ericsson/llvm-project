@@ -1182,9 +1182,24 @@ public:
 };
 }
 
-const MemRegion *stripElementRegions(const MemRegion *R) {
-  while (const auto *ER = dyn_cast<ElementRegion>(R)) {
-    R = ER->getSuperRegion();
+static const MemRegion *getAccessibleRegion(const MemRegion *R) {
+  while (true) {
+    switch (R->getKind()) {
+      case MemRegion::FieldRegionKind: {
+        const FieldDecl *FD = cast<FieldRegion>(R)->getDecl();
+        if (!FD->getParent()->isUnion())
+          break;
+        [[fallthrough]];
+      }
+      case MemRegion::ElementRegionKind:
+      case MemRegion::CXXBaseObjectRegionKind:
+      case MemRegion::CXXDerivedObjectRegionKind:
+        R = cast<SubRegion>(R)->getSuperRegion();
+        continue;
+      default:
+        break;
+    }
+    break;
   }
   return R;
 }
@@ -1192,7 +1207,7 @@ const MemRegion *stripElementRegions(const MemRegion *R) {
 bool InvalidateRegionsWorker::AddToWorkList(const MemRegion *R) {
   bool doNotInvalidateSuperRegion = ITraits.hasTrait(
       R, RegionAndSymbolInvalidationTraits::TK_DoNotInvalidateSuperRegion);
-  const MemRegion *BaseR = doNotInvalidateSuperRegion ? R : stripElementRegions(R);
+  const MemRegion *BaseR = doNotInvalidateSuperRegion ? R : getAccessibleRegion(R);
   return AddToWorkList(WorkListElement(BaseR), getCluster(BaseR));
 }
 

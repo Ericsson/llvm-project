@@ -1648,8 +1648,9 @@ void constEscape(const void *ptr);
 void testConstEscapeThroughAnotherField(void) {
   struct IntAndPtr s;
   s.p = malloc(sizeof(int));
-  constEscape(&(s.x)); // could free s->p!
-} // no-warning
+  // We assume that an opaque function doesn't use offsetof trickery to free p.
+  constEscape(&(s.x));
+} // expected-warning {{Potential leak of memory pointed to by 's.p'}}
 
 // PR15623
 int testNoCheckerDataPropagationFromLogicalOpOperandToOpResult(void) {

@@ -128,12 +128,12 @@ void memset2_inheritance_field() {
   Derived d;
   // FIXME: OOB memset on a derived field with sizeof(Derived).
   // Current behavior: with 'oob' the analysis sinks; with 'no-oob' it
-  // continues and the evals produce UNKNOWN.
+  // continues.
   // Expected behavior: the OOB error is fatal regardless of whether the
   // OutOfBounds checker frontend is enabled, so the evals should be unreachable
   // in all configurations. The 'no-oob' expectations below should be removed.
   memset(&d.d_mem, 0, sizeof(Derived)); // oob-warning{{overflows the destination buffer}}
-  clang_analyzer_eval(d.b_mem == 0); // no-oob-warning{{UNKNOWN}}
+  clang_analyzer_eval(d.b_mem == 0); // no-oob-warning{{FALSE}}
   clang_analyzer_eval(d.d_mem == 0); // no-oob-warning{{UNKNOWN}}
 }
 
@@ -214,13 +214,13 @@ void memset8_virtual_inheritance_field() {
   // implementations &d.b_mem differs from &d because the vtable pointer
   // precedes the first member, so this may also write past the object's
   // extent.
-  // Current behavior: with 'oob' the analysis sinks. With 'no-oob' the fields
-  // are treated as UNKNOWN.
+  // Current behavior: with 'oob' the analysis sinks. With 'no-oob' b_mem
+  // is treated as UNKNOWN, while d_mem remains uninitialized.
   // Expected behavior: same as memset2. The OOB error should be fatal in all
   // configurations and the 'no-oob' expectations should be removed.
   memset(&d.b_mem, 0, sizeof(Derived)); // oob-warning{{overflows the destination buffer}}
   clang_analyzer_eval(d.b_mem == 0); // no-oob-warning{{UNKNOWN}}
-  clang_analyzer_eval(d.d_mem == 0); // no-oob-warning{{UNKNOWN}}
+  clang_analyzer_eval(d.d_mem == 0); // no-oob-warning{{is a garbage value}}
 }
 
 } // namespace memset_non_pod

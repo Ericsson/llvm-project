@@ -56,14 +56,14 @@ void test_no_uaf(void)
   struct SomeData *data = alloc_data();
   put_data(data);
   data->i += 1; // no warning
-}
+} // expected-warning{{Potential leak of memory pointed to by 'data'}}
 
 void test_no_uaf_nested(void)
 {
   struct SomeData *data = alloc_data();
   put_data_nested(data);
   data->i += 1; // no warning
-}
+} // expected-warning{{Potential leak of memory pointed to by 'data'}}
 
 void test_uaf(void)
 {
